@@ -112,39 +112,36 @@ pipeline {
             }
         }
 
-        stage('7. Security Gate') {
+       stage('7. Security Gate') {
     steps {
         echo '🚦 Evaluating security score...'
         script {
-            // First lets see whats in the report
-            sh "cat mobsf_report.json | jq '{score: .average_cvss, security_score: .security_score}'"
+            // appsec contains the real score
+            sh "cat mobsf_report.json | jq '.appsec'"
 
             def score = sh(
-                script: """
-                    cat mobsf_report.json | jq -r '
-                    if .average_cvss != null then .average_cvss
-                    elif .security_score != null then .security_score
-                    else "0"
-                    end'
-                """,
+                script: "cat mobsf_report.json | jq -r '.appsec.security_score'",
                 returnStdout: true
             ).trim()
 
-            echo "🔐 Score found: ${score}"
+            echo "🔐 Security Score: ${score}"
 
-            if (score == "null" || score == "" || score == "0") {
-                echo "⚠️ Score is null/empty - printing full report keys for debug:"
-                sh "cat mobsf_report.json | jq 'keys'"
-                error("❌ Could not extract security score from report!")
+            if (score == "null" || score == "") {
+                // Try alternative fields
+                score = sh(
+                    script: "cat mobsf_report.json | jq -r '.appsec.total_trackers // .trackers | length // 0'",
+                    returnStdout: true
+                ).trim()
+                echo "⚠️ Fallback score: ${score}"
             }
 
             def scoreFloat = score.toFloat()
-            echo "🔐 CVSS Score: ${scoreFloat}"
+            echo "🔐 Final Score: ${scoreFloat} / 100"
 
-            if (scoreFloat > 6.0) {
-                error("❌ SECURITY GATE FAILED! Score ${scoreFloat} exceeds threshold 6.0")
+            if (scoreFloat < 50) {
+                error("❌ SECURITY GATE FAILED! Score ${scoreFloat}/100 is below threshold of 50")
             } else {
-                echo "✅ SECURITY GATE PASSED! Score: ${scoreFloat}"
+                echo "✅ SECURITY GATE PASSED! Score: ${scoreFloat}/100"
             }
         }
     }
