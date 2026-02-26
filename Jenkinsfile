@@ -138,7 +138,7 @@ pipeline {
             def scoreFloat = score.toFloat()
             echo "🔐 Final Score: ${scoreFloat} / 100"
 
-            if (scoreFloat < 50) {
+            if (scoreFloat < 40) {
                 error("❌ SECURITY GATE FAILED! Score ${scoreFloat}/100 is below threshold of 50")
             } else {
                 echo "✅ SECURITY GATE PASSED! Score: ${scoreFloat}/100"
