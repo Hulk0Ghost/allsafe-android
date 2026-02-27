@@ -2,14 +2,17 @@ pipeline {
     agent any
 
     environment {
-        MOBSF_SERVER  = "http://localhost:8000"
-        MOBSF_API_KEY = credentials('MOBSF_API_KEY')
-        APK_PATH      = "samples\\allsafe.apk"
-        PACKAGE_NAME  = "infosecadventures.allsafe"
+        MOBSF_SERVER   = "http://localhost:8000"
+        MOBSF_API_KEY  = credentials('MOBSF_API_KEY')
+        CLAUDE_API_KEY = credentials('CLAUDE_API_KEY')
+        APK_PATH       = "samples\\allsafe.apk"
+        PACKAGE_NAME   = "infosecadventures.allsafe"
+        OUTPUT_DIR     = "validation_output"
     }
 
     stages {
 
+        // ─── STAGE 1 ────────────────────────────
         stage('1. Checkout Code') {
             steps {
                 echo 'Pulling code from GitHub...'
@@ -18,6 +21,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 2 ────────────────────────────
         stage('2. Verify APK') {
             steps {
                 echo 'Checking APK exists...'
@@ -32,6 +36,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 3 ────────────────────────────
         stage('3. Upload APK to MobSF') {
             steps {
                 echo 'Uploading APK to MobSF...'
@@ -40,20 +45,25 @@ pipeline {
                         script: 'curl -s -F "file=@%APK_PATH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/upload',
                         returnStdout: true
                     ).trim()
+
                     upload = upload.readLines().drop(1).join('\n').trim()
                     echo "Upload Response: ${upload}"
+
                     if (upload.contains('"error"')) {
                         error("Upload failed: ${upload}")
                     }
+
                     env.FILE_HASH = bat(
                         script: "@echo ${upload}| C:\\Windows\\System32\\jq.exe -r .hash",
                         returnStdout: true
                     ).trim()
+
                     echo "File Hash: ${env.FILE_HASH}"
                 }
             }
         }
 
+        // ─── STAGE 4 ────────────────────────────
         stage('4. Trigger SAST Scan') {
             steps {
                 echo 'Starting SAST scan...'
@@ -62,6 +72,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 5 ────────────────────────────
         stage('5. Fetch SAST Report') {
             steps {
                 echo 'Fetching SAST report...'
@@ -70,6 +81,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 6 ────────────────────────────
         stage('6. Start Dynamic Analysis') {
             steps {
                 echo 'Starting DAST on emulator...'
@@ -85,6 +97,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 7 ────────────────────────────
         stage('7. Exercise App (ADB Monkey)') {
             steps {
                 echo 'Running ADB Monkey...'
@@ -99,6 +112,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 8 ────────────────────────────
         stage('8. Stop Dynamic Analysis') {
             steps {
                 echo 'Stopping DAST...'
@@ -114,6 +128,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 9 ────────────────────────────
         stage('9. Fetch DAST Report') {
             steps {
                 echo 'Fetching DAST report...'
@@ -122,6 +137,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 10 ───────────────────────────
         stage('10. Download PDF Report') {
             steps {
                 echo 'Downloading PDF report...'
@@ -130,6 +146,7 @@ pipeline {
             }
         }
 
+        // ─── STAGE 11 ───────────────────────────
         stage('11. Combined Security Gate') {
             steps {
                 echo 'Evaluating combined SAST + DAST score...'
@@ -150,23 +167,65 @@ pipeline {
                     echo "DAST Score:     ${dastScore}/100"
                     echo "Combined Score: ${combinedScore}/100"
 
-                    if (combinedScore < 40) {
-                        error("SECURITY GATE FAILED! Combined score ${combinedScore}/100")
+                    if (combinedScore < 50) {
+                        echo "WARNING: Score ${combinedScore}/100 below threshold - continuing for AI validation"
                     } else {
-                        echo "SECURITY GATE PASSED! Score: ${combinedScore}/100"
+                        echo "PASSED: Score ${combinedScore}/100"
                     }
+
+                    env.COMBINED_SCORE = combinedScore.toString()
                 }
             }
         }
+
+        // ─── STAGE 12 ───────────────────────────
+        stage('12. AI Validate Findings') {
+            steps {
+                echo 'Running Claude AI validation...'
+                bat '''
+                    if not exist validation_output mkdir validation_output
+                    cd scripts
+                    set MOBSF_SERVER=http://localhost:8000
+                    set PACKAGE_NAME=infosecadventures.allsafe
+                    set OUTPUT_DIR=..\validation_output
+                    python validate_findings.py ^
+                        ..\sast_report.json ^
+                        ..\dast_report.json ^
+                        %FILE_HASH%
+                '''
+                echo 'AI validation complete!'
+            }
+        }
+
+        // ─── STAGE 13 ───────────────────────────
+        stage('13. Generate HTML Report') {
+            steps {
+                echo 'Generating validation report...'
+                bat '''
+                    cd scripts
+                    set OUTPUT_DIR=..\validation_output
+                    set PACKAGE_NAME=infosecadventures.allsafe
+                    python report_generator.py ^
+                        ..\validation_output\validation_results.json
+                '''
+                echo 'HTML report generated!'
+            }
+        }
+
     }
 
+    // ─── POST ACTIONS ───────────────────────
     post {
         always {
-            echo 'Archiving reports...'
-            archiveArtifacts artifacts: 'sast_report.json,dast_report.json,mobsf_final_report.pdf',
+            echo 'Archiving all reports...'
+            archiveArtifacts artifacts: 'sast_report.json,dast_report.json,mobsf_final_report.pdf,validation_output/validation_results.json,validation_output/validation_report.html,validation_output/screenshots/*.png',
                              allowEmptyArchive: true
         }
-        success { echo 'Pipeline PASSED!' }
-        failure { echo 'Pipeline FAILED - Check the red stage!' }
+        success {
+            echo 'Pipeline PASSED! All reports archived.'
+        }
+        failure {
+            echo 'Pipeline FAILED - Check the red stage!'
+        }
     }
 }
