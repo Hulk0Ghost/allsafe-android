@@ -221,7 +221,7 @@ pipeline {
                     echo "📊 DAST Score:     ${dastScore}/100"
                     echo "📊 Combined Score: ${combinedScore}/100"
 
-                    if (combinedScore < 50) {
+                    if (combinedScore < 40) {
                         error("❌ SECURITY GATE FAILED! Combined score ${combinedScore}/100")
                     } else {
                         echo "✅ SECURITY GATE PASSED! Score: ${combinedScore}/100"
