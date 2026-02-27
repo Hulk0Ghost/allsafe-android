@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-        MOBSF_SERVER   = "http://localhost:8000"
-        MOBSF_API_KEY  = credentials('MOBSF_API_KEY')
-        CLAUDE_API_KEY = credentials('CLAUDE_API_KEY')
-        APK_PATH       = "samples\\allsafe.apk"
-        PACKAGE_NAME   = "infosecadventures.allsafe"
-        OUTPUT_DIR     = "validation_output"
+        MOBSF_SERVER  = "http://localhost:8000"
+        MOBSF_API_KEY = credentials('MOBSF_API_KEY')
+        GROQ_API_KEY  = credentials('GROQ_API_KEY')
+        APK_PATH      = "samples\\allsafe.apk"
+        PACKAGE_NAME  = "infosecadventures.allsafe"
+        OUTPUT_DIR    = "validation_output"
     }
 
     stages {
@@ -42,7 +42,11 @@ pipeline {
                 echo 'Uploading APK to MobSF...'
                 script {
                     def upload = bat(
-                        script: 'curl -s -F "file=@%APK_PATH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/upload',
+                        script: '''
+                            curl -s -F "file=@%APK_PATH%" ^
+                            -H "Authorization: %MOBSF_API_KEY%" ^
+                            %MOBSF_SERVER%/api/v1/upload
+                        ''',
                         returnStdout: true
                     ).trim()
 
@@ -67,7 +71,12 @@ pipeline {
         stage('4. Trigger SAST Scan') {
             steps {
                 echo 'Starting SAST scan...'
-                bat 'curl -s -d "hash=%FILE_HASH%&re_scan=0" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/scan'
+                bat '''
+                    curl -s ^
+                    -d "hash=%FILE_HASH%&re_scan=0" ^
+                    -H "Authorization: %MOBSF_API_KEY%" ^
+                    %MOBSF_SERVER%/api/v1/scan
+                '''
                 echo 'SAST scan complete!'
             }
         }
@@ -76,7 +85,13 @@ pipeline {
         stage('5. Fetch SAST Report') {
             steps {
                 echo 'Fetching SAST report...'
-                bat 'curl -s -d "hash=%FILE_HASH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/report_json -o sast_report.json'
+                bat '''
+                    curl -s ^
+                    -d "hash=%FILE_HASH%" ^
+                    -H "Authorization: %MOBSF_API_KEY%" ^
+                    %MOBSF_SERVER%/api/v1/report_json ^
+                    -o sast_report.json
+                '''
                 echo 'SAST report saved!'
             }
         }
@@ -87,7 +102,12 @@ pipeline {
                 echo 'Starting DAST on emulator...'
                 script {
                     def dastStart = bat(
-                        script: 'curl -s -d "hash=%FILE_HASH%&re_install=1&activity=1" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/dynamic/start_analysis',
+                        script: '''
+                            curl -s ^
+                            -d "hash=%FILE_HASH%&re_install=1&activity=1" ^
+                            -H "Authorization: %MOBSF_API_KEY%" ^
+                            %MOBSF_SERVER%/api/v1/dynamic/start_analysis
+                        ''',
                         returnStdout: true
                     ).trim()
                     dastStart = dastStart.readLines().drop(1).join('\n').trim()
@@ -105,7 +125,11 @@ pipeline {
                     timeout /t 10 /nobreak
                     adb shell am start -n %PACKAGE_NAME%/.MainActivity
                     timeout /t 5 /nobreak
-                    adb shell monkey -p %PACKAGE_NAME% --throttle 300 --ignore-crashes --ignore-timeouts -v 500
+                    adb shell monkey -p %PACKAGE_NAME% ^
+                        --throttle 300 ^
+                        --ignore-crashes ^
+                        --ignore-timeouts ^
+                        -v 500
                     echo Monkey testing complete!
                 '''
                 echo 'App exercised successfully!'
@@ -118,7 +142,12 @@ pipeline {
                 echo 'Stopping DAST...'
                 script {
                     def dastStop = bat(
-                        script: 'curl -s -d "hash=%FILE_HASH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/dynamic/stop_analysis',
+                        script: '''
+                            curl -s ^
+                            -d "hash=%FILE_HASH%" ^
+                            -H "Authorization: %MOBSF_API_KEY%" ^
+                            %MOBSF_SERVER%/api/v1/dynamic/stop_analysis
+                        ''',
                         returnStdout: true
                     ).trim()
                     dastStop = dastStop.readLines().drop(1).join('\n').trim()
@@ -132,7 +161,13 @@ pipeline {
         stage('9. Fetch DAST Report') {
             steps {
                 echo 'Fetching DAST report...'
-                bat 'curl -s -d "hash=%FILE_HASH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/report_json -o dast_report.json'
+                bat '''
+                    curl -s ^
+                    -d "hash=%FILE_HASH%" ^
+                    -H "Authorization: %MOBSF_API_KEY%" ^
+                    %MOBSF_SERVER%/api/v1/report_json ^
+                    -o dast_report.json
+                '''
                 echo 'DAST report saved!'
             }
         }
@@ -141,7 +176,13 @@ pipeline {
         stage('10. Download PDF Report') {
             steps {
                 echo 'Downloading PDF report...'
-                bat 'curl -s -d "hash=%FILE_HASH%" -H "Authorization: %MOBSF_API_KEY%" %MOBSF_SERVER%/api/v1/download_pdf -o mobsf_final_report.pdf'
+                bat '''
+                    curl -s ^
+                    -d "hash=%FILE_HASH%" ^
+                    -H "Authorization: %MOBSF_API_KEY%" ^
+                    %MOBSF_SERVER%/api/v1/download_pdf ^
+                    -o mobsf_final_report.pdf
+                '''
                 echo 'PDF report saved!'
             }
         }
@@ -181,11 +222,13 @@ pipeline {
         // ─── STAGE 12 ───────────────────────────
         stage('12. AI Validate Findings') {
             steps {
-                echo 'Running Claude AI validation...'
+                echo 'Running AI validation with Groq...'
                 bat '''
                     if not exist validation_output mkdir validation_output
                     cd scripts
                     set MOBSF_SERVER=http://localhost:8000
+                    set MOBSF_API_KEY=%MOBSF_API_KEY%
+                    set CLAUDE_API_KEY=%GROQ_API_KEY%
                     set PACKAGE_NAME=infosecadventures.allsafe
                     set OUTPUT_DIR=..\validation_output
                     python validate_findings.py ^
@@ -200,7 +243,7 @@ pipeline {
         // ─── STAGE 13 ───────────────────────────
         stage('13. Generate HTML Report') {
             steps {
-                echo 'Generating validation report...'
+                echo 'Generating HTML validation report...'
                 bat '''
                     cd scripts
                     set OUTPUT_DIR=..\validation_output
@@ -218,11 +261,17 @@ pipeline {
     post {
         always {
             echo 'Archiving all reports...'
-            archiveArtifacts artifacts: 'sast_report.json,dast_report.json,mobsf_final_report.pdf,validation_output/validation_results.json,validation_output/validation_report.html,validation_output/screenshots/*.png',
-                             allowEmptyArchive: true
+            archiveArtifacts artifacts: '''
+                sast_report.json,
+                dast_report.json,
+                mobsf_final_report.pdf,
+                validation_output/validation_results.json,
+                validation_output/validation_report.html,
+                validation_output/screenshots/*.png
+            ''', allowEmptyArchive: true
         }
         success {
-            echo 'Pipeline PASSED! All reports archived.'
+            echo 'Pipeline PASSED! All 13 stages completed.'
         }
         failure {
             echo 'Pipeline FAILED - Check the red stage!'
