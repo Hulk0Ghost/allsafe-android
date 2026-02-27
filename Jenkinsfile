@@ -199,38 +199,33 @@ pipeline {
         // ─── SECURITY GATE ──────────────────────────────────────
 
         stage('11. Combined Security Gate') {
-            steps {
-                echo '🚦 Evaluating combined SAST + DAST score...'
-                script {
-                    // SAST score
-                    def sastScore = bat(
-                        script: '@C:\\Windows\\System32\\jq.exe -r ".appsec.security_score" sast_report.json',
-                        returnStdout: true
-                    ).trim().toFloat()
+    steps {
+        echo '🚦 Evaluating combined SAST + DAST score...'
+        script {
+            def sastScore = bat(
+                script: '@C:\\Windows\\System32\\jq.exe -r ".appsec.security_score // 0" sast_report.json',
+                returnStdout: true
+            ).trim().toFloat()
 
-                    // DAST score
-                    def dastScore = bat(
-                        script: '@C:\\Windows\\System32\\jq.exe -r ".appsec.security_score" dast_report.json',
-                        returnStdout: true
-                    ).trim().toFloat()
+            def dastScore = bat(
+                script: '@C:\\Windows\\System32\\jq.exe -r ".appsec.security_score // 0" dast_report.json',
+                returnStdout: true
+            ).trim().toFloat()
 
-                    // Combined score (average)
-                    def combinedScore = (sastScore + dastScore) / 2
+            def combinedScore = (sastScore + dastScore) / 2
 
-                    echo "📊 SAST Score:     ${sastScore}/100"
-                    echo "📊 DAST Score:     ${dastScore}/100"
-                    echo "📊 Combined Score: ${combinedScore}/100"
+            echo "📊 SAST Score:     ${sastScore}/100"
+            echo "📊 DAST Score:     ${dastScore}/100"
+            echo "📊 Combined Score: ${combinedScore}/100"
 
-                    if (combinedScore < 40) {
-                        error("❌ SECURITY GATE FAILED! Combined score ${combinedScore}/100")
-                    } else {
-                        echo "✅ SECURITY GATE PASSED! Score: ${combinedScore}/100"
-                    }
-                }
+            if (combinedScore < 40) {
+                error("❌ FAILED! Combined score ${combinedScore}/100")
+            } else {
+                echo "✅ PASSED! Score: ${combinedScore}/100"
             }
         }
     }
-
+}
     post {
         always {
             echo '📁 Archiving all reports...'
