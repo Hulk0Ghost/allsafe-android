@@ -26,12 +26,12 @@ pipeline {
             steps {
                 echo 'Checking APK exists...'
                 bat '''
-                    if not exist "%APK_PATH%" (
+                    if not exist "samples\\allsafe.apk" (
                         echo APK not found!
                         exit /b 1
                     )
                     echo APK found!
-                    dir "%APK_PATH%"
+                    dir "samples\\allsafe.apk"
                 '''
             }
         }
@@ -43,9 +43,9 @@ pipeline {
                 script {
                     def upload = bat(
                         script: '''
-                            curl -s -F "file=@%APK_PATH%" ^
+                            curl -s -F "file=@samples\\allsafe.apk" ^
                             -H "Authorization: %MOBSF_API_KEY%" ^
-                            %MOBSF_SERVER%/api/v1/upload
+                            http://localhost:8000/api/v1/upload
                         ''',
                         returnStdout: true
                     ).trim()
@@ -75,7 +75,7 @@ pipeline {
                     curl -s ^
                     -d "hash=%FILE_HASH%&re_scan=0" ^
                     -H "Authorization: %MOBSF_API_KEY%" ^
-                    %MOBSF_SERVER%/api/v1/scan
+                    http://localhost:8000/api/v1/scan
                 '''
                 echo 'SAST scan complete!'
             }
@@ -89,7 +89,7 @@ pipeline {
                     curl -s ^
                     -d "hash=%FILE_HASH%" ^
                     -H "Authorization: %MOBSF_API_KEY%" ^
-                    %MOBSF_SERVER%/api/v1/report_json ^
+                    http://localhost:8000/api/v1/report_json ^
                     -o sast_report.json
                 '''
                 echo 'SAST report saved!'
@@ -106,7 +106,7 @@ pipeline {
                             curl -s ^
                             -d "hash=%FILE_HASH%&re_install=1&activity=1" ^
                             -H "Authorization: %MOBSF_API_KEY%" ^
-                            %MOBSF_SERVER%/api/v1/dynamic/start_analysis
+                            http://localhost:8000/api/v1/dynamic/start_analysis
                         ''',
                         returnStdout: true
                     ).trim()
@@ -123,9 +123,9 @@ pipeline {
                 echo 'Running ADB Monkey...'
                 bat '''
                     timeout /t 10 /nobreak
-                    adb shell am start -n %PACKAGE_NAME%/.MainActivity
+                    adb shell am start -n infosecadventures.allsafe/.MainActivity
                     timeout /t 5 /nobreak
-                    adb shell monkey -p %PACKAGE_NAME% ^
+                    adb shell monkey -p infosecadventures.allsafe ^
                         --throttle 300 ^
                         --ignore-crashes ^
                         --ignore-timeouts ^
@@ -146,7 +146,7 @@ pipeline {
                             curl -s ^
                             -d "hash=%FILE_HASH%" ^
                             -H "Authorization: %MOBSF_API_KEY%" ^
-                            %MOBSF_SERVER%/api/v1/dynamic/stop_analysis
+                            http://localhost:8000/api/v1/dynamic/stop_analysis
                         ''',
                         returnStdout: true
                     ).trim()
@@ -165,7 +165,7 @@ pipeline {
                     curl -s ^
                     -d "hash=%FILE_HASH%" ^
                     -H "Authorization: %MOBSF_API_KEY%" ^
-                    %MOBSF_SERVER%/api/v1/report_json ^
+                    http://localhost:8000/api/v1/report_json ^
                     -o dast_report.json
                 '''
                 echo 'DAST report saved!'
@@ -180,7 +180,7 @@ pipeline {
                     curl -s ^
                     -d "hash=%FILE_HASH%" ^
                     -H "Authorization: %MOBSF_API_KEY%" ^
-                    %MOBSF_SERVER%/api/v1/download_pdf ^
+                    http://localhost:8000/api/v1/download_pdf ^
                     -o mobsf_final_report.pdf
                 '''
                 echo 'PDF report saved!'
@@ -223,19 +223,19 @@ pipeline {
         stage('12. AI Validate Findings') {
             steps {
                 echo 'Running AI validation with Groq...'
-                bat '''
-                    if not exist validation_output mkdir validation_output
-                    cd scripts
-                    set MOBSF_SERVER=http://localhost:8000
-                    set MOBSF_API_KEY=%MOBSF_API_KEY%
-                    set CLAUDE_API_KEY=%GROQ_API_KEY%
-                    set PACKAGE_NAME=infosecadventures.allsafe
-                    set OUTPUT_DIR=..\validation_output
-                    python validate_findings.py ^
-                        ..\sast_report.json ^
-                        ..\dast_report.json ^
-                        %FILE_HASH%
-                '''
+                script {
+                    def ws = pwd()
+                    bat """
+                        if not exist validation_output mkdir validation_output
+                        cd scripts
+                        set MOBSF_SERVER=http://localhost:8000
+                        set MOBSF_API_KEY=%MOBSF_API_KEY%
+                        set CLAUDE_API_KEY=%GROQ_API_KEY%
+                        set PACKAGE_NAME=infosecadventures.allsafe
+                        set OUTPUT_DIR=${ws}\\validation_output
+                        python validate_findings.py ${ws}\\sast_report.json ${ws}\\dast_report.json %FILE_HASH%
+                    """
+                }
                 echo 'AI validation complete!'
             }
         }
@@ -244,13 +244,15 @@ pipeline {
         stage('13. Generate HTML Report') {
             steps {
                 echo 'Generating HTML validation report...'
-                bat '''
-                    cd scripts
-                    set OUTPUT_DIR=..\validation_output
-                    set PACKAGE_NAME=infosecadventures.allsafe
-                    python report_generator.py ^
-                        ..\validation_output\validation_results.json
-                '''
+                script {
+                    def ws = pwd()
+                    bat """
+                        cd scripts
+                        set OUTPUT_DIR=${ws}\\validation_output
+                        set PACKAGE_NAME=infosecadventures.allsafe
+                        python report_generator.py ${ws}\\validation_output\\validation_results.json
+                    """
+                }
                 echo 'HTML report generated!'
             }
         }
@@ -261,14 +263,8 @@ pipeline {
     post {
         always {
             echo 'Archiving all reports...'
-            archiveArtifacts artifacts: '''
-                sast_report.json,
-                dast_report.json,
-                mobsf_final_report.pdf,
-                validation_output/validation_results.json,
-                validation_output/validation_report.html,
-                validation_output/screenshots/*.png
-            ''', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'sast_report.json,dast_report.json,mobsf_final_report.pdf,validation_output/validation_results.json,validation_output/validation_report.html,validation_output/screenshots/*.png',
+                             allowEmptyArchive: true
         }
         success {
             echo 'Pipeline PASSED! All 13 stages completed.'
