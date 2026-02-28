@@ -11,7 +11,8 @@ import sys
 import time
 
 # Fix Windows encoding
-sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 from mobsf_tools import MobSFTools
 from claude_agent import ClaudeAgent
@@ -32,6 +33,9 @@ DAST_REPORT    = sys.argv[2] if len(sys.argv) > 2 else 'dast_report.json'
 FILE_HASH      = sys.argv[3] if len(sys.argv) > 3 else ''
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+SEVERITY_FILTER = ['CRITICAL', 'HIGH', 'MEDIUM']
+SEVERITY_ORDER  = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2}
 
 
 # -----------------------------------------
@@ -64,9 +68,6 @@ def get_findings(sast_data):
     print('\n[*] Filtering CRITICAL/HIGH/MEDIUM findings...')
     findings = []
 
-    SEVERITY_FILTER = ['CRITICAL', 'HIGH', 'MEDIUM']
-    SEVERITY_ORDER  = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2}
-
     # From code analysis
     code_analysis = sast_data.get('code_analysis', {}).get('findings', {})
     for rule_id, finding in code_analysis.items():
@@ -74,15 +75,12 @@ def get_findings(sast_data):
         if severity in SEVERITY_FILTER:
             findings.append({
                 'id':          rule_id,
-                'title':       finding.get('metadata', {}).get(
-                               'description', rule_id),
+                'title':       finding.get('metadata', {}).get('description', rule_id),
                 'severity':    severity,
                 'cvss':        finding.get('metadata', {}).get('cvss', 0),
                 'cwe':         finding.get('metadata', {}).get('cwe', 'N/A'),
-                'owasp':       finding.get('metadata', {}).get(
-                               'owasp-mobile', 'N/A'),
-                'description': finding.get('metadata', {}).get(
-                               'description', ''),
+                'owasp':       finding.get('metadata', {}).get('owasp-mobile', 'N/A'),
+                'description': finding.get('metadata', {}).get('description', ''),
                 'files':       finding.get('files', {}),
                 'source':      'code_analysis'
             })
@@ -90,7 +88,6 @@ def get_findings(sast_data):
     # From binary analysis (can be list OR dict depending on MobSF version)
     binary_raw = sast_data.get('binary_analysis', [])
 
-    # Normalize to list of dicts
     if isinstance(binary_raw, dict):
         binary_list = list(binary_raw.values())
     elif isinstance(binary_raw, list):
@@ -118,7 +115,6 @@ def get_findings(sast_data):
     # Sort: CRITICAL -> HIGH -> MEDIUM
     findings.sort(key=lambda x: SEVERITY_ORDER.get(x['severity'], 3))
 
-    # Print counts
     critical = sum(1 for f in findings if f['severity'] == 'CRITICAL')
     high     = sum(1 for f in findings if f['severity'] == 'HIGH')
     medium   = sum(1 for f in findings if f['severity'] == 'MEDIUM')
@@ -168,26 +164,26 @@ def get_source_snippet(finding, workspace='.'):
 
 
 # -----------------------------------------
-# SAVE RESULTS
+# SAVE RESULTS  -- always saves, even if empty
 # -----------------------------------------
 
 def save_results(all_results):
     output = []
     for r in all_results:
         output.append({
-            'finding_id':  r['finding']['id'],
-            'title':       r['finding']['title'],
-            'severity':    r['finding']['severity'],
-            'cwe':         r['finding'].get('cwe', 'N/A'),
-            'owasp':       r['finding'].get('owasp', 'N/A'),
-            'cvss':        r['finding'].get('cvss', 0),
-            'verdict':     r['verdict']['verdict'],
-            'confidence':  r['verdict']['confidence'],
-            'explanation': r['verdict']['explanation'],
+            'finding_id':       r['finding']['id'],
+            'title':            r['finding']['title'],
+            'severity':         r['finding']['severity'],
+            'cwe':              r['finding'].get('cwe', 'N/A'),
+            'owasp':            r['finding'].get('owasp', 'N/A'),
+            'cvss':             r['finding'].get('cvss', 0),
+            'verdict':          r['verdict']['verdict'],
+            'confidence':       r['verdict']['confidence'],
+            'explanation':      r['verdict']['explanation'],
             'evidence_summary': r['verdict'].get('evidence_summary', ''),
-            'fix':         r['verdict']['fix_recommendation'],
-            'risk_score':  r['verdict']['risk_score'],
-            'screenshots': r['verdict'].get('screenshots', [])
+            'fix':              r['verdict']['fix_recommendation'],
+            'risk_score':       r['verdict']['risk_score'],
+            'screenshots':      r['verdict'].get('screenshots', [])
         })
 
     results_path = os.path.join(OUTPUT_DIR, 'validation_results.json')
@@ -207,12 +203,9 @@ def print_summary(all_results):
     print('  VALIDATION SUMMARY')
     print('='*55)
 
-    confirmed = [r for r in all_results
-                 if r['verdict']['verdict'] == 'CONFIRMED']
-    false_pos = [r for r in all_results
-                 if r['verdict']['verdict'] == 'FALSE_POSITIVE']
-    needs_rev = [r for r in all_results
-                 if r['verdict']['verdict'] == 'NEEDS_REVIEW']
+    confirmed = [r for r in all_results if r['verdict']['verdict'] == 'CONFIRMED']
+    false_pos = [r for r in all_results if r['verdict']['verdict'] == 'FALSE_POSITIVE']
+    needs_rev = [r for r in all_results if r['verdict']['verdict'] == 'NEEDS_REVIEW']
 
     print(f'  Total Findings : {len(all_results)}')
     print(f'  Confirmed      : {len(confirmed)}')
@@ -250,10 +243,9 @@ def print_summary(all_results):
 if __name__ == '__main__':
 
     print('\n' + '='*55)
-    print('  MobSF SAST Validation with AI')
+    print('  MobSF SAST Validation with Groq AI')
     print('='*55)
 
-    # Validate config
     if not MOBSF_API_KEY:
         print('[ERROR] MOBSF_API_KEY not set!')
         sys.exit(1)
@@ -277,8 +269,15 @@ if __name__ == '__main__':
     # Get findings
     findings = get_findings(sast)
 
+    # -------------------------------------------------------
+    # FIX: Always save validation_results.json even if empty
+    # -------------------------------------------------------
     if not findings:
         print('\n[OK] No CRITICAL/HIGH/MEDIUM findings - pipeline passes!')
+        results_path = os.path.join(OUTPUT_DIR, 'validation_results.json')
+        with open(results_path, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=2)
+        print(f'  [OK] Empty results file saved: {results_path}')
         sys.exit(0)
 
     # Init MobSF tools
@@ -306,14 +305,10 @@ if __name__ == '__main__':
         print(f'\n[{i+1}/{total}] Processing: '
               f'[{finding["severity"]}] {finding["title"][:50]}')
 
-        # Get source code context
         snippet = get_source_snippet(finding)
-
-        # Run full validation
-        result = agent.validate_finding(finding, snippet)
+        result  = agent.validate_finding(finding, snippet)
         all_results.append(result)
 
-        # Delay between findings
         if i < total - 1:
             print('  [*] Waiting before next finding...')
             time.sleep(2)
