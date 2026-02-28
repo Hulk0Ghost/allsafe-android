@@ -58,17 +58,183 @@ Common False Positive Patterns:
 - Generic boilerplate code from IDE templates
 """
 
-# Maps finding source to attack context
-SOURCE_CONTEXT = {
-    'manifest_analysis': 'Focus on: exported components without permissions, debug=true, backup=true, cleartext traffic, task hijacking via launchMode.',
-    'code_analysis':     'Focus on: actual code reachability, whether the vulnerable code path is triggered, hardcoded credentials, insecure crypto usage.',
-    'binary_analysis':   'Focus on: stack protection, PIE, RELRO, anti-debugging - consider if these are exploitable in practice.',
-    'network_security':  'Focus on: MITM feasibility, whether the app uses certificate pinning, TLS version, and real network traffic patterns.',
-    'permissions':       'Focus on: whether the permission is actually used in code, if it can be abused by other apps, and permission escalation risks.',
-    'secrets':           'Focus on: whether the secret grants real access (not expired/revoked/test key), scope of access it provides.',
-    'firebase':          'Focus on: whether the Firebase DB has public read/write rules, test with unauthenticated access.',
-    'urls':              'Focus on: whether HTTP endpoints transmit sensitive data, authentication tokens, or PII.',
+# -----------------------------------------
+# FRIDA SCRIPT MAP
+# Maps finding keywords → exact MobSF script names
+# Scripts are in: frida_scripts/android/others/
+# Used to guide the AI to pick the right script
+# -----------------------------------------
+
+FRIDA_SCRIPT_MAP = {
+    # ── Cryptography ──────────────────────────────────────────────────
+    'aes':               'crypto-aes-key',            # Capture AES keys in use
+    'hardcoded key':     'crypto-aes-key',
+    'weak crypto':       'crypto-trace-cipher',        # Trace Cipher.getInstance() calls
+    'ecb':               'crypto-trace-cipher',
+    'des':               'crypto-trace-cipher',
+    'cipher':            'crypto-trace-cipher',
+    'keystore':          'crypto-dump-keystore',       # Dump Android Keystore entries
+    'key generation':    'crypto-trace-keygenparameterspec',  # Trace KeyGenParameterSpec
+    'keygen':            'crypto-trace-keygenparameterspec',
+    'secretkey':         'crypto-trace-secretkeyfactory',     # Trace SecretKeyFactory
+    'pbkdf':             'crypto-trace-secretkeyfactory',
+    'keyguard':          'crypto-keyguard-credential-intent', # Keyguard credential bypass
+    'ssl pinning':       'detect-ssl-pinning',         # Detect what pinning lib is used
+    'certificate pin':   'detect-ssl-pinning',
+    'flutter':           'ssl-bypass-flutter',         # Flutter-specific SSL bypass
+    'okhttp':            'dump-okhttp-calls',          # Dump full OkHttp request/response
+
+    # ── Storage ───────────────────────────────────────────────────────
+    'sharedpref':        'trace-shared-preference',    # Trace all SharedPreference reads/writes
+    'shared pref':       'trace-shared-preference',
+    'preferences':       'trace-shared-preference',
+    'file':              'trace-file',                 # Trace file open/read/write
+    'external storage':  'trace-file',
+    'internal storage':  'trace-file',
+    'inputstream':       'dump-inputstream',           # Dump raw InputStream content
+
+    # ── Network / Traffic ─────────────────────────────────────────────
+    'firebase':          'dump-okhttp-calls',          # Firebase uses OkHttp
+    'cleartext':         'dump-okhttp-calls',
+    'http':              'dump-okhttp-calls',
+    'intent':            'dump-intent',                # Dump Intent extras on send/receive
+    'broadcast':         'dump-intent',
+    'deep link':         'ui-deeplink-trace',          # Trace deep link handling
+    'deeplink':          'ui-deeplink-trace',
+
+    # ── WebView ───────────────────────────────────────────────────────
+    'webview':           'audit-webview',              # Full WebView security audit
+    'javascript interface': 'trace-javascript-interface',  # Trace addJavascriptInterface
+    'webview debug':     'ui-webview-enable-debugging', # Enable WebView remote debugging
+    'xss':               'audit-webview',
+
+    # ── Platform / IPC ────────────────────────────────────────────────
+    'exported':          'dump-intent',                # Trace intents to exported components
+    'activity':          'trace-intent',               # Trace Activity launch intents
+    'service':           'trace-intent',
+    'receiver':          'trace-intent',
+    'provider':          'trace-intent',
+    'reflection':        'hook-java-reflection',       # Hook reflection calls
+    'json':              'hook-json',                  # Hook JSON parsing (data exposure)
+    'logging':           'hook-logging',               # Hook Log.d/e/i/w calls
+    'log.':              'hook-logging',
+
+    # ── Authentication / Biometrics ───────────────────────────────────
+    'biometric':         'ui-fingerprint-bypass',      # Bypass fingerprint authentication
+    'fingerprint':       'ui-fingerprint-bypass',
+    'flag_secure':       'ui-flag-secure-bypass',      # Bypass FLAG_SECURE (screenshot prevention)
+    'screenshot':        'ui-flag-secure-bypass',
+
+    # ── Resilience / Anti-tampering ───────────────────────────────────
+    'root':              'root_bypass',                # default hook
+    'emulator':          'bypass-emulator-detection',  # Bypass emulator detection
+    'adb detection':     'bypass-adb-detection',       # Bypass ADB presence detection
+    'react native':      'bypass-react-native-emulator-detection',
+    'debugger':          'debugger_check_bypass',      # default hook
+    'clipboard':         'dump_clipboard',             # default hook
+    'billing':           'hook-billing',               # Hook Google Play Billing
+    'bluetooth':         'trace-bluetooth',            # Trace Bluetooth API usage
+
+    # ── Environment / Device Info ─────────────────────────────────────
+    'device id':         'device-android-id',          # Get Android device ID
+    'android id':        'device-android-id',
+    'environment':       'app-environment',            # Dump app environment info
+    'gps':               'helper-android-spoof-gps',   # Spoof GPS location
+
+    # ── Auxiliary (class/method exploration) ──────────────────────────
+    'class':             'get_loaded_classes',         # List all loaded classes (auxiliary)
+    'method':            'get_methods',                # List methods of a class (auxiliary)
+    'string':            'string_catch',               # Catch string operations (auxiliary)
+    'constructor':       'hook-constructor',           # Hook class constructors
 }
+
+# -----------------------------------------
+# SOURCE CONTEXT
+# Per-source guidance + Frida script hints
+# -----------------------------------------
+
+SOURCE_CONTEXT = {
+    'manifest_analysis': (
+        'Focus on: exported components without permissions, debug=true, backup=true, '
+        'cleartext traffic, task hijacking via launchMode. '
+        'Manifest findings are CONFIGURATION FACTS — confirm from the manifest text, no Frida needed. '
+        'Relevant scripts if DAST confirmation wanted: dump-intent (exported components), '
+        'ui-deeplink-trace (deep links), trace-intent (activity/service/receiver launch).'
+    ),
+    'code_analysis': (
+        'Focus on: actual code reachability, whether the vulnerable code path is triggered, '
+        'hardcoded credentials, insecure crypto usage. '
+        'CRYPTO findings → use: crypto-aes-key, crypto-trace-cipher, crypto-dump-keystore, '
+        'crypto-trace-keygenparameterspec, crypto-trace-secretkeyfactory. '
+        'STORAGE findings → use: trace-shared-preference, trace-file, dump-inputstream. '
+        'LOGGING findings → use: hook-logging. '
+        'REFLECTION findings → use: hook-java-reflection. '
+        'WEBVIEW findings → use: audit-webview, trace-javascript-interface.'
+    ),
+    'binary_analysis': (
+        'Focus on: stack protection, PIE, RELRO, anti-debugging - consider if exploitable in practice. '
+        'Relevant scripts: app-environment (binary info), device-environment.'
+    ),
+    'network_security': (
+        'Focus on: MITM feasibility, certificate pinning, TLS version, real traffic patterns. '
+        'Use run_tls_tests for definitive TLS/pinning result. '
+        'Relevant scripts: detect-ssl-pinning (what pinning lib is used), '
+        'dump-okhttp-calls (intercept full HTTP request/response), '
+        'ssl-bypass-flutter (if Flutter app), ssl-pinning-bypass (bypass generic pinning).'
+    ),
+    'permissions': (
+        'Focus on: whether the permission is actually invoked at runtime, '
+        'evidence of sensitive data being accessed. '
+        'Use get_logcat to see permission-related log output. '
+        'Use run_frida_script with api_monitor to capture the exact API call. '
+        'Relevant scripts: hook-logging (log permission use), '
+        'trace-file (storage permissions), trace-bluetooth (BLUETOOTH permission).'
+    ),
+    'secrets': (
+        'Focus on: whether the secret grants real access (not expired/revoked/test key), '
+        'scope of access, and whether it is transmitted in network traffic. '
+        'Use get_http_logs to check if the key appears in HTTP requests. '
+        'Relevant scripts: dump-okhttp-calls (see key in HTTP headers/body), '
+        'hook-logging (key logged at runtime).'
+    ),
+    'firebase': (
+        'Focus on: whether Firebase DB has public read/write rules. '
+        'Use get_http_logs to capture the Firebase REST API call and response. '
+        'Relevant scripts: dump-okhttp-calls (full Firebase HTTP request+response body), '
+        'trace-shared-preference (Firebase token storage).'
+    ),
+    'urls': (
+        'Focus on: whether HTTP endpoints transmit sensitive data, tokens, or PII. '
+        'Use get_http_logs to see the actual request and response content. '
+        'Relevant scripts: dump-okhttp-calls (full request/response), hook-json (JSON data).'
+    ),
+}
+
+# -----------------------------------------
+# FINDING KEYWORD → FRIDA SCRIPT LOOKUP
+# Used to pre-select the best script before
+# even calling Groq, so the AI gets a hint
+# -----------------------------------------
+
+def get_suggested_frida_scripts(finding):
+    """
+    Given a finding, return the top 1-3 Frida script names most relevant to it.
+    Used to inject script hints into the test plan prompt.
+    """
+    title = finding.get('title', '').lower()
+    desc  = finding.get('description', '').lower()
+    text  = title + ' ' + desc
+
+    matched = []
+    seen    = set()
+    for keyword, script in FRIDA_SCRIPT_MAP.items():
+        if keyword in text and script not in seen:
+            matched.append(script)
+            seen.add(script)
+        if len(matched) >= 3:
+            break
+
+    return matched
 
 
 class ClaudeAgent:
@@ -124,9 +290,10 @@ class ClaudeAgent:
     def get_test_plan(self, finding, source_code_snippet=None):
         print(f'  [AI] Analyzing: {finding["title"][:55]}')
 
-        source      = finding.get('source', 'code_analysis')
-        tool_list   = json.dumps(self.tools.get_tool_list(), indent=2)
-        src_context = SOURCE_CONTEXT.get(source, '')
+        source           = finding.get('source', 'code_analysis')
+        tool_list        = json.dumps(self.tools.get_tool_list(), indent=2)
+        src_context      = SOURCE_CONTEXT.get(source, '')
+        suggested_scripts = get_suggested_frida_scripts(finding)
 
         source_section = ''
         if source_code_snippet:
@@ -135,10 +302,29 @@ RELEVANT SOURCE CODE (use this to assess real reachability):
 {source_code_snippet}
 """
 
+        frida_hint = ''
+        if suggested_scripts:
+            frida_hint = f"""
+SUGGESTED FRIDA SCRIPTS FOR THIS FINDING TYPE:
+Based on the finding title/description, these named scripts are most relevant:
+  {', '.join(suggested_scripts)}
+Use run_named_frida_script with script_name="{suggested_scripts[0]}" as a priority step.
+These scripts are located in frida_scripts/android/others/ inside MobSF.
+"""
+
         system_prompt = ANDROID_SECURITY_CONTEXT + """
 
 Your task: given a SAST finding, design a minimal but targeted DAST test plan to CONFIRM or DENY it.
-Be precise. Use the minimum steps needed - don't waste API calls on irrelevant tools.
+Be precise. Use the minimum steps needed — don't waste API calls on irrelevant tools.
+
+TOOL SELECTION RULES:
+- manifest_analysis findings → skip Frida, use get_logcat or take_screenshot only
+- network_security findings → ALWAYS include run_tls_tests
+- firebase/urls findings → ALWAYS include get_http_logs (proxy captures all traffic)
+- crypto/storage findings → use run_named_frida_script with the suggested script
+- permissions findings → use run_frida_script (api_monitor captures permission API calls)
+- For ANY finding → get_logcat is almost always useful (captures runtime data exposure)
+
 You MUST respond with ONLY valid JSON - no markdown, no explanation, no code blocks.
 """
 
@@ -155,6 +341,7 @@ FINDING TO VALIDATE:
 
 SPECIFIC FOCUS FOR THIS SOURCE TYPE:
 {src_context}
+{frida_hint}
 {source_section}
 
 AVAILABLE MOBSF DAST TOOLS:
@@ -174,8 +361,8 @@ Respond with ONLY this JSON (raw, no markdown):
       "reason": "exactly what this step will reveal about the finding"
     }}
   ],
-  "what_to_look_for": "specific evidence that CONFIRMS the finding (be precise, e.g. exact log strings, HTTP endpoints, file paths)",
-  "false_positive_indicators": "specific evidence that suggests this is a FALSE POSITIVE (e.g. code only in test class, library code, never executed path)",
+  "what_to_look_for": "specific evidence that CONFIRMS the finding (exact log strings, HTTP endpoints, Frida output)",
+  "false_positive_indicators": "specific evidence that suggests FALSE POSITIVE (code only in test class, library code, never executed)",
   "severity_justification": "why this severity level is or isn't appropriate for this specific app context"
 }}
 """
@@ -240,21 +427,29 @@ Respond with ONLY this JSON (raw, no markdown):
     def _call_tool(self, tool_name, params, finding_id):
         safe_id  = finding_id.replace('/', '_').replace(' ', '_')
         dispatch = {
-            'start_activity':           lambda: self.tools.start_activity(params.get('activity', '')),
+            # App control
             'launch_app':               lambda: self.tools.launch_app(params.get('package', self.package)),
             'stop_app':                 lambda: self.tools.stop_app(params.get('package', self.package)),
+            'start_activity':           lambda: self.tools.start_activity(params.get('activity', '')),
+            'adb_command':              lambda: self.tools.adb_command(params.get('cmd', '')),
+            # UI
             'adb_input_text':           lambda: self.tools.adb_input_text(params.get('text', '')),
             'adb_tap':                  lambda: self.tools.adb_tap(params.get('x', 500), params.get('y', 500)),
             'adb_press_key':            lambda: self.tools.adb_press_key(params.get('keycode', 66)),
             'take_screenshot':          lambda: self.tools.take_screenshot(f'{safe_id}_step{params.get("step", 1)}'),
-            'start_pcap':               lambda: self.tools.start_pcap(),
-            'stop_pcap':                lambda: self.tools.stop_pcap(),
-            'get_http_logs':            lambda: self.tools.get_http_logs(),
-            'get_frida_logs':           lambda: self.tools.get_frida_logs(),
-            'run_frida_script':         lambda: self.tools.run_frida_script(),
-            'run_named_frida_script':   lambda: self.tools.run_named_frida_script(params.get('script_name', 'api_monitor')),
+            # Logs & traffic
             'get_logcat':               lambda: self.tools.get_logcat(),
+            'get_http_logs':            lambda: self.tools.get_http_logs(),
+            # Frida (working now — frida 16.1.1 x86_64 confirmed)
+            'run_frida_script':         lambda: self.tools.run_frida_script(),
+            'run_named_frida_script':   lambda: self.tools.run_named_frida_script(params.get('script_name', '')),
+            'get_frida_logs':           lambda: self.tools.get_frida_logs(),
+            'get_frida_api_monitor':    lambda: self.tools.get_frida_api_monitor(),
+            'get_dependencies':         lambda: self.tools.get_dependencies(),
+            # Component & network testing
             'test_exported_activities': lambda: self.tools.test_exported_activities(),
+            'run_activity_tester':      lambda: self.tools.run_activity_tester(),
+            'run_tls_tests':            lambda: self.tools.run_tls_tests(),
         }
 
         if tool_name in dispatch:
@@ -291,6 +486,31 @@ Respond with ONLY this JSON (raw, no markdown):
             if tool == 'take_screenshot' and result.get('success'):
                 screenshots.append(result.get('path', ''))
                 evidence_items.append(f'Step {step}: Screenshot captured at {result.get("path", "")}')
+
+            elif tool == 'get_frida_api_monitor' and result.get('success'):
+                data = result.get('data', {})
+                evidence_items.append(f'Step {step}: API Monitor: {json.dumps(data)[:500]}')
+
+            elif tool == 'get_dependencies' and result.get('success'):
+                data = result.get('data', {})
+                evidence_items.append(f'Step {step}: Runtime dependencies: {json.dumps(data)[:400]}')
+
+            elif tool == 'adb_command' and result.get('success'):
+                data = result.get('data', {})
+                evidence_items.append(f'Step {step}: ADB output: {json.dumps(data)[:400]}')
+
+            elif tool == 'run_tls_tests' and result.get('success'):
+                data = result.get('data', {})
+                tls_summary = json.dumps(data)[:600]
+                evidence_items.append(f'Step {step}: TLS/SSL tests completed: {tls_summary}')
+
+            elif tool == 'run_activity_tester' and result.get('success'):
+                data = result.get('data', {})
+                evidence_items.append(f'Step {step}: Activity tester ran - {json.dumps(data)[:300]}')
+
+            elif tool == 'test_exported_activities' and result.get('success'):
+                data = result.get('data', [])
+                evidence_items.append(f'Step {step}: Exported activity tester ran - {json.dumps(data)[:300]}')
 
             elif tool == 'get_http_logs' and result.get('success'):
                 data = result.get('data', {})
