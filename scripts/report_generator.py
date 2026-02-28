@@ -1,7 +1,7 @@
+# -*- coding: utf-8 -*-
 """
-Report Generator
-Creates beautiful HTML report with findings,
-verdicts, screenshots and fix recommendations
+HTML Report Generator for MobSF AI Validation Results
+Generates a beautiful, interactive HTML report
 """
 
 import json
@@ -10,385 +10,429 @@ import sys
 import base64
 from datetime import datetime
 
+# Fix Windows encoding
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # CONFIG
-# ─────────────────────────────────────────
+# -----------------------------------------
 
+RESULTS_JSON = sys.argv[1] if len(sys.argv) > 1 else 'validation_results.json'
 OUTPUT_DIR   = os.getenv('OUTPUT_DIR', 'validation_output')
-PACKAGE_NAME = os.getenv('PACKAGE_NAME', 'infosecadventures.allsafe')
+PACKAGE_NAME = os.getenv('PACKAGE_NAME', 'Unknown App')
 
-RESULTS_JSON = sys.argv[1] if len(sys.argv) > 1 else \
-               f'{OUTPUT_DIR}/validation_results.json'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# -----------------------------------------
+# LOAD RESULTS
+# -----------------------------------------
 
-# ─────────────────────────────────────────
-# LOAD SCREENSHOT AS BASE64
-# ─────────────────────────────────────────
+def load_results():
+    print('[*] Loading validation results...')
+    try:
+        with open(RESULTS_JSON, encoding='utf-8') as f:
+            data = json.load(f)
+        print(f'  [OK] Loaded {len(data)} findings')
+        return data
+    except FileNotFoundError:
+        print(f'[ERROR] Results file not found: {RESULTS_JSON}')
+        sys.exit(1)
+    except Exception as e:
+        print(f'[ERROR] Failed to load results: {e}')
+        sys.exit(1)
 
-def load_screenshot_b64(path):
-    """Embed screenshot directly in HTML as base64"""
+# -----------------------------------------
+# ENCODE SCREENSHOTS
+# -----------------------------------------
+
+def encode_screenshot(path):
     try:
         if path and os.path.exists(path):
             with open(path, 'rb') as f:
-                data = base64.b64encode(f.read()).decode('utf-8')
-            return f'data:image/png;base64,{data}'
+                return base64.b64encode(f.read()).decode('utf-8')
     except Exception:
         pass
     return None
 
+# -----------------------------------------
+# STATS
+# -----------------------------------------
 
-# ─────────────────────────────────────────
-# SEVERITY COLOR MAPPING
-# ─────────────────────────────────────────
+def get_stats(results):
+    stats = {
+        'total':       len(results),
+        'critical':    sum(1 for r in results if r.get('severity') == 'CRITICAL'),
+        'high':        sum(1 for r in results if r.get('severity') == 'HIGH'),
+        'medium':      sum(1 for r in results if r.get('severity') == 'MEDIUM'),
+        'confirmed':   sum(1 for r in results if r.get('verdict') == 'CONFIRMED'),
+        'false_pos':   sum(1 for r in results if r.get('verdict') == 'FALSE_POSITIVE'),
+        'needs_rev':   sum(1 for r in results if r.get('verdict') == 'NEEDS_REVIEW'),
+        'avg_risk':    0,
+    }
+    if results:
+        scores = [r.get('risk_score', 0) for r in results]
+        stats['avg_risk'] = round(sum(scores) / len(scores), 1)
+    return stats
 
-SEVERITY_COLORS = {
-    'CRITICAL': {'bg': '#ffeaea', 'border': '#d32f2f',
-                 'badge': '#d32f2f', 'text': '#b71c1c'},
-    'HIGH':     {'bg': '#fff3e0', 'border': '#f57c00',
-                 'badge': '#f57c00', 'text': '#e65100'},
-    'MEDIUM':   {'bg': '#fffde7', 'border': '#f9a825',
-                 'badge': '#f9a825', 'text': '#f57f17'},
+# -----------------------------------------
+# SEVERITY / VERDICT COLORS
+# -----------------------------------------
+
+SEV_COLOR = {
+    'CRITICAL': '#c62828',
+    'HIGH':     '#e65100',
+    'MEDIUM':   '#f9a825',
+    'LOW':      '#2e7d32',
+    'INFO':     '#1565c0',
 }
 
-VERDICT_COLORS = {
-    'CONFIRMED':      {'bg': '#fdecea', 'color': '#c62828',
-                       'icon': '🚨', 'label': 'Confirmed Vulnerability'},
-    'FALSE_POSITIVE': {'bg': '#e8f5e9', 'color': '#2e7d32',
-                       'icon': '✅', 'label': 'False Positive'},
-    'NEEDS_REVIEW':   {'bg': '#e3f2fd', 'color': '#1565c0',
-                       'icon': '🔵', 'label': 'Needs Manual Review'},
+VRD_COLOR = {
+    'CONFIRMED':      '#c62828',
+    'FALSE_POSITIVE': '#2e7d32',
+    'NEEDS_REVIEW':   '#1565c0',
 }
 
+VRD_BG = {
+    'CONFIRMED':      '#ffebee',
+    'FALSE_POSITIVE': '#e8f5e9',
+    'NEEDS_REVIEW':   '#e3f2fd',
+}
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # GENERATE HTML
-# ─────────────────────────────────────────
+# -----------------------------------------
 
-def generate_report(results):
+def generate_html(results, stats):
+    print('[*] Generating HTML report...')
+
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    # Stats
-    total      = len(results)
-    critical   = sum(1 for r in results if r['severity'] == 'CRITICAL')
-    high       = sum(1 for r in results if r['severity'] == 'HIGH')
-    medium     = sum(1 for r in results if r['severity'] == 'MEDIUM')
-    confirmed  = sum(1 for r in results if r['verdict'] == 'CONFIRMED')
-    false_pos  = sum(1 for r in results if r['verdict'] == 'FALSE_POSITIVE')
-    needs_rev  = sum(1 for r in results if r['verdict'] == 'NEEDS_REVIEW')
+    # Build finding cards
+    cards_html = ''
+    for i, r in enumerate(results):
+        sev     = r.get('severity', 'INFO')
+        vrd     = r.get('verdict', 'NEEDS_REVIEW')
+        sc_col  = SEV_COLOR.get(sev, '#888')
+        vrd_col = VRD_COLOR.get(vrd, '#888')
+        vrd_bg  = VRD_BG.get(vrd, '#f5f5f5')
 
-    # Overall risk score
-    risk_scores = [r.get('risk_score', 0) for r in results
-                   if r['verdict'] == 'CONFIRMED']
-    avg_risk    = round(sum(risk_scores) / len(risk_scores), 1) \
-                  if risk_scores else 0
+        # Screenshots
+        shots_html = ''
+        for shot_path in r.get('screenshots', []):
+            b64 = encode_screenshot(shot_path)
+            if b64:
+                shots_html += f'''
+                <div class="screenshot-wrap">
+                    <img src="data:image/png;base64,{b64}"
+                         alt="Screenshot"
+                         onclick="openLightbox(this.src)"
+                         class="screenshot" />
+                </div>'''
 
-    html = f"""<!DOCTYPE html>
+        if shots_html:
+            shots_html = f'<div class="screenshots"><h4>Screenshots</h4><div class="shots-grid">{shots_html}</div></div>'
+
+        risk_score = r.get('risk_score', 0)
+        risk_color = '#c62828' if risk_score >= 8 else '#e65100' if risk_score >= 5 else '#2e7d32'
+
+        cards_html += f'''
+        <div class="card"
+             data-severity="{sev}"
+             data-verdict="{vrd}"
+             style="border-left: 5px solid {sc_col}; background: {vrd_bg};">
+
+            <div class="card-header" onclick="toggleCard(this)">
+                <div class="card-title">
+                    <span class="badge" style="background:{sc_col}">{sev}</span>
+                    <span class="badge" style="background:{vrd_col}">{vrd}</span>
+                    <span class="title-text">{r.get('title','Unknown')[:80]}</span>
+                </div>
+                <div class="card-meta">
+                    <span class="risk-score" style="color:{risk_color}">
+                        Risk: {risk_score}/10
+                    </span>
+                    <span class="confidence">
+                        Confidence: {r.get('confidence','N/A')}
+                    </span>
+                    <span class="chevron">&#9660;</span>
+                </div>
+            </div>
+
+            <div class="card-body" style="display:none;">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>CWE</label>
+                        <span>{r.get('cwe','N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>OWASP</label>
+                        <span>{r.get('owasp','N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>CVSS</label>
+                        <span>{r.get('cvss', 'N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Finding ID</label>
+                        <span>{r.get('finding_id','N/A')[:40]}</span>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h4>AI Verdict</h4>
+                    <p>{r.get('explanation','No explanation available.')}</p>
+                </div>
+
+                <div class="section">
+                    <h4>Evidence Summary</h4>
+                    <p>{r.get('evidence_summary','No evidence summary.')}</p>
+                </div>
+
+                <div class="section fix-box">
+                    <h4>Fix Recommendation</h4>
+                    <p>{r.get('fix','No fix recommendation.')}</p>
+                </div>
+
+                {shots_html}
+            </div>
+        </div>'''
+
+    # Risk badge color for header
+    avg = stats['avg_risk']
+    avg_col = '#c62828' if avg >= 7 else '#e65100' if avg >= 4 else '#2e7d32'
+
+    html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MobSF AI Validation Report</title>
+    <title>MobSF AI Validation Report - {PACKAGE_NAME}</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont,
-                         'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                         Roboto, Arial, sans-serif;
             background: #f0f2f5;
             color: #333;
+            min-height: 100vh;
         }}
 
-        /* ── HEADER ── */
+        /* HEADER */
         .header {{
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
             color: white;
-            padding: 40px;
+            padding: 30px 40px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }}
-        .header-top {{
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            flex-wrap: wrap;
-            gap: 20px;
-        }}
-        .header h1 {{
-            font-size: 26px;
-            font-weight: 700;
-            margin-bottom: 6px;
-        }}
-        .header p {{
-            color: #8892b0;
-            font-size: 14px;
-        }}
-        .risk-badge {{
-            background: {'#d32f2f' if avg_risk >= 7
-                         else '#f57c00' if avg_risk >= 4
-                         else '#388e3c'};
+        .header h1 {{ font-size: 28px; font-weight: 700; margin-bottom: 6px; }}
+        .header .meta {{ font-size: 14px; opacity: 0.8; margin-bottom: 16px; }}
+        .header .avg-risk {{
+            display: inline-block;
+            background: {avg_col};
             color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-align: center;
-        }}
-        .risk-badge .risk-num {{
-            font-size: 36px;
+            padding: 6px 16px;
+            border-radius: 20px;
             font-weight: 700;
-            line-height: 1;
-        }}
-        .risk-badge .risk-label {{
-            font-size: 12px;
-            margin-top: 4px;
-            opacity: 0.9;
+            font-size: 16px;
         }}
 
-        /* ── STATS ── */
-        .stats {{
-            display: flex;
+        /* STATS CARDS */
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 16px;
             padding: 24px 40px;
-            flex-wrap: wrap;
-            background: white;
-            border-bottom: 1px solid #e0e0e0;
         }}
-        .stat {{
-            flex: 1;
-            min-width: 110px;
-            text-align: center;
-            padding: 16px;
-            border-radius: 8px;
-            background: #f8f9fa;
-        }}
-        .stat .num {{
-            font-size: 32px;
-            font-weight: 700;
-            line-height: 1;
-        }}
-        .stat .lbl {{
-            font-size: 12px;
-            color: #666;
-            margin-top: 6px;
-        }}
-        .stat.critical .num {{ color: #d32f2f; }}
-        .stat.high     .num {{ color: #f57c00; }}
-        .stat.medium   .num {{ color: #f9a825; }}
-        .stat.confirmed .num {{ color: #c62828; }}
-        .stat.fp        .num {{ color: #2e7d32; }}
-        .stat.review    .num {{ color: #1565c0; }}
-
-        /* ── FILTERS ── */
-        .filters {{
-            padding: 20px 40px;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
-        }}
-        .filter-label {{ font-size: 13px; color: #666; margin-right: 4px; }}
-        .filter-btn {{
-            padding: 6px 16px;
-            border: 1px solid #ddd;
-            border-radius: 20px;
-            background: white;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }}
-        .filter-btn:hover, .filter-btn.active {{
-            background: #1a1a2e;
-            color: white;
-            border-color: #1a1a2e;
-        }}
-
-        /* ── FINDINGS ── */
-        .findings {{ padding: 0 40px 40px; }}
-
-        .finding-card {{
+        .stat-card {{
             background: white;
             border-radius: 10px;
-            margin-bottom: 20px;
+            padding: 20px;
+            text-align: center;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }}
+        .stat-card .num {{
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 6px;
+        }}
+        .stat-card .lbl {{ font-size: 12px; color: #666; text-transform: uppercase; }}
+        .stat-card.critical .num {{ color: #c62828; }}
+        .stat-card.high     .num {{ color: #e65100; }}
+        .stat-card.medium   .num {{ color: #f9a825; }}
+        .stat-card.confirmed .num {{ color: #c62828; }}
+        .stat-card.fp        .num {{ color: #2e7d32; }}
+        .stat-card.review    .num {{ color: #1565c0; }}
+        .stat-card.total     .num {{ color: #333; }}
+
+        /* FILTERS */
+        .filters {{
+            padding: 0 40px 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }}
+        .filters span {{ font-weight: 600; margin-right: 6px; color: #555; }}
+        .filter-btn {{
+            padding: 7px 16px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }}
+        .filter-btn:hover,
+        .filter-btn.active {{
+            background: #1a237e;
+            color: white;
+            border-color: #1a237e;
+        }}
+
+        /* FINDINGS */
+        .findings {{ padding: 0 40px 40px; }}
+        .findings-count {{
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 16px;
+        }}
+
+        .card {{
+            background: white;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.07);
             overflow: hidden;
             transition: box-shadow 0.2s;
         }}
-        .finding-card:hover {{
-            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-        }}
+        .card:hover {{ box-shadow: 0 4px 16px rgba(0,0,0,0.12); }}
 
-        .finding-header {{
-            padding: 18px 24px;
+        .card-header {{
+            padding: 16px 20px;
+            cursor: pointer;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 12px;
-            cursor: pointer;
-            user-select: none;
-        }}
-
-        .finding-header-left {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex: 1;
-        }}
-
-        .badge {{
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            color: white;
-            white-space: nowrap;
-        }}
-
-        .finding-title {{
-            font-size: 15px;
-            font-weight: 600;
-        }}
-
-        .finding-header-right {{
-            display: flex;
-            align-items: center;
             gap: 10px;
         }}
-
-        .verdict-badge {{
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
+        .card-title {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        .title-text {{
             font-weight: 600;
+            font-size: 14px;
+        }}
+        .badge {{
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
             white-space: nowrap;
         }}
-
-        .chevron {{
-            font-size: 12px;
-            color: #999;
-            transition: transform 0.3s;
+        .card-meta {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 13px;
         }}
-        .chevron.open {{ transform: rotate(180deg); }}
+        .risk-score {{ font-weight: 800; font-size: 14px; }}
+        .confidence {{ color: #666; }}
+        .chevron {{ color: #999; font-size: 12px; }}
 
-        .finding-body {{
-            display: none;
-            border-top: 1px solid #f0f0f0;
+        .card-body {{
+            padding: 20px;
+            border-top: 1px solid #eee;
         }}
-        .finding-body.open {{ display: block; }}
 
-        .finding-grid {{
+        .info-grid {{
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0;
-        }}
-
-        .info-section {{
-            padding: 20px 24px;
-            border-right: 1px solid #f0f0f0;
-        }}
-        .info-section:last-child {{ border-right: none; }}
-        .info-section h3 {{
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #999;
-            margin-bottom: 14px;
-        }}
-
-        .info-table {{ width: 100%; }}
-        .info-table tr td {{
-            padding: 6px 0;
-            font-size: 13px;
-            vertical-align: top;
-        }}
-        .info-table tr td:first-child {{
-            color: #666;
-            width: 120px;
-            font-weight: 500;
-        }}
-
-        .verdict-box {{
-            padding: 20px 24px;
-            border-top: 1px solid #f0f0f0;
-        }}
-        .verdict-box h3 {{
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #999;
-            margin-bottom: 14px;
-        }}
-        .verdict-content {{
-            padding: 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            line-height: 1.6;
-        }}
-        .verdict-content p {{ margin-bottom: 8px; }}
-        .verdict-content p:last-child {{ margin-bottom: 0; }}
-        .verdict-content strong {{ display: inline-block; width: 120px;
-                                   color: #555; }}
-
-        .fix-box {{
-            padding: 20px 24px;
-            border-top: 1px solid #f0f0f0;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
             background: #f8f9fa;
+            padding: 14px;
+            border-radius: 8px;
         }}
-        .fix-box h3 {{
+        .info-item label {{
+            display: block;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #888;
+            margin-bottom: 3px;
+            font-weight: 600;
+        }}
+        .info-item span {{
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+        }}
+
+        .section {{ margin-bottom: 16px; }}
+        .section h4 {{
             font-size: 13px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #999;
-            margin-bottom: 10px;
+            color: #555;
+            margin-bottom: 6px;
+            font-weight: 700;
         }}
-        .fix-box p {{
+        .section p {{
             font-size: 14px;
             line-height: 1.6;
             color: #444;
         }}
-
-        /* ── SCREENSHOTS ── */
-        .screenshots {{
-            padding: 20px 24px;
-            border-top: 1px solid #f0f0f0;
+        .fix-box {{
+            background: #e8f5e9;
+            border-left: 4px solid #2e7d32;
+            padding: 12px 16px;
+            border-radius: 0 8px 8px 0;
         }}
-        .screenshots h3 {{
+        .fix-box h4 {{ color: #2e7d32; }}
+
+        /* SCREENSHOTS */
+        .screenshots {{ margin-top: 16px; }}
+        .screenshots h4 {{
             font-size: 13px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #999;
-            margin-bottom: 14px;
+            color: #555;
+            margin-bottom: 10px;
+            font-weight: 700;
         }}
-        .screenshot-grid {{
+        .shots-grid {{
             display: flex;
-            gap: 12px;
             flex-wrap: wrap;
+            gap: 10px;
         }}
-        .screenshot-item {{
-            position: relative;
-        }}
-        .screenshot-item img {{
-            width: 200px;
-            height: auto;
-            border: 1px solid #ddd;
-            border-radius: 6px;
+        .screenshot-wrap {{
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
             cursor: pointer;
+        }}
+        .screenshot {{
+            max-width: 200px;
+            max-height: 360px;
+            display: block;
             transition: transform 0.2s;
         }}
-        .screenshot-item img:hover {{
-            transform: scale(1.02);
-        }}
-        .screenshot-caption {{
-            font-size: 11px;
-            color: #999;
-            text-align: center;
-            margin-top: 4px;
-        }}
+        .screenshot:hover {{ transform: scale(1.02); }}
 
-        /* ── LIGHTBOX ── */
+        /* LIGHTBOX */
         .lightbox {{
             display: none;
             position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.9);
             z-index: 1000;
             justify-content: center;
             align-items: center;
@@ -400,346 +444,197 @@ def generate_report(results):
             border-radius: 8px;
         }}
         .lightbox-close {{
-            position: fixed;
+            position: absolute;
             top: 20px; right: 30px;
             color: white;
             font-size: 36px;
             cursor: pointer;
+            font-weight: bold;
         }}
 
-        /* ── FOOTER ── */
-        .footer {{
+        /* NO RESULTS */
+        .no-results {{
             text-align: center;
-            padding: 30px;
+            padding: 60px;
             color: #999;
-            font-size: 12px;
-            background: white;
-            border-top: 1px solid #eee;
-            margin-top: 20px;
+            font-size: 18px;
         }}
 
-        @media (max-width: 768px) {{
-            .header, .stats, .filters, .findings {{ padding-left: 16px;
-                                                    padding-right: 16px; }}
-            .finding-grid {{ grid-template-columns: 1fr; }}
-            .info-section {{ border-right: none;
-                             border-bottom: 1px solid #f0f0f0; }}
+        @media (max-width: 600px) {{
+            .header, .stats-grid, .filters, .findings {{
+                padding-left: 16px;
+                padding-right: 16px;
+            }}
         }}
     </style>
 </head>
 <body>
 
-<!-- LIGHTBOX -->
-<div class="lightbox" id="lightbox" onclick="closeLightbox()">
-    <span class="lightbox-close">×</span>
-    <img id="lightbox-img" src="" alt="Screenshot">
-</div>
-
 <!-- HEADER -->
 <div class="header">
-    <div class="header-top">
-        <div>
-            <h1>📱 MobSF AI Security Validation Report</h1>
-            <p>Package: {PACKAGE_NAME} &nbsp;|&nbsp; Generated: {timestamp}</p>
-            <p style="margin-top:8px; color:#64ffda; font-size:13px;">
-                Powered by Claude AI + MobSF DAST
-            </p>
-        </div>
-        <div class="risk-badge">
-            <div class="risk-num">{avg_risk}</div>
-            <div class="risk-label">Avg Risk Score</div>
-        </div>
+    <h1>MobSF AI Validation Report</h1>
+    <div class="meta">
+        Package: <strong>{PACKAGE_NAME}</strong> &nbsp;|&nbsp;
+        Generated: {timestamp} &nbsp;|&nbsp;
+        Total Findings: {stats['total']}
     </div>
+    <div class="avg-risk">Average Risk Score: {stats['avg_risk']}/10</div>
 </div>
 
 <!-- STATS -->
-<div class="stats">
-    <div class="stat critical">
-        <div class="num">{critical}</div>
-        <div class="lbl">Critical</div>
-    </div>
-    <div class="stat high">
-        <div class="num">{high}</div>
-        <div class="lbl">High</div>
-    </div>
-    <div class="stat medium">
-        <div class="num">{medium}</div>
-        <div class="lbl">Medium</div>
-    </div>
-    <div class="stat">
-        <div class="num">{total}</div>
+<div class="stats-grid">
+    <div class="stat-card total">
+        <div class="num">{stats['total']}</div>
         <div class="lbl">Total</div>
     </div>
-    <div class="stat confirmed">
-        <div class="num">{confirmed}</div>
+    <div class="stat-card critical">
+        <div class="num">{stats['critical']}</div>
+        <div class="lbl">Critical</div>
+    </div>
+    <div class="stat-card high">
+        <div class="num">{stats['high']}</div>
+        <div class="lbl">High</div>
+    </div>
+    <div class="stat-card medium">
+        <div class="num">{stats['medium']}</div>
+        <div class="lbl">Medium</div>
+    </div>
+    <div class="stat-card confirmed">
+        <div class="num">{stats['confirmed']}</div>
         <div class="lbl">Confirmed</div>
     </div>
-    <div class="stat fp">
-        <div class="num">{false_pos}</div>
-        <div class="lbl">False Positive</div>
+    <div class="stat-card fp">
+        <div class="num">{stats['false_pos']}</div>
+        <div class="lbl">False Pos.</div>
     </div>
-    <div class="stat review">
-        <div class="num">{needs_rev}</div>
-        <div class="lbl">Needs Review</div>
+    <div class="stat-card review">
+        <div class="num">{stats['needs_rev']}</div>
+        <div class="lbl">Need Review</div>
     </div>
 </div>
 
 <!-- FILTERS -->
 <div class="filters">
-    <span class="filter-label">Filter by:</span>
-    <button class="filter-btn active" onclick="filterFindings('all', this)">
-        All ({total})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('CONFIRMED', this)">
-        🚨 Confirmed ({confirmed})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('FALSE_POSITIVE', this)">
-        ✅ False Positive ({false_pos})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('NEEDS_REVIEW', this)">
-        🔵 Needs Review ({needs_rev})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('CRITICAL', this)">
-        Critical ({critical})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('HIGH', this)">
-        High ({high})
-    </button>
-    <button class="filter-btn" onclick="filterFindings('MEDIUM', this)">
-        Medium ({medium})
-    </button>
+    <span>Filter:</span>
+    <button class="filter-btn active" onclick="filterCards('ALL', this)">All</button>
+    <button class="filter-btn" onclick="filterCards('CONFIRMED', this)">Confirmed</button>
+    <button class="filter-btn" onclick="filterCards('FALSE_POSITIVE', this)">False Positives</button>
+    <button class="filter-btn" onclick="filterCards('NEEDS_REVIEW', this)">Needs Review</button>
+    <button class="filter-btn" onclick="filterCards('CRITICAL', this)">Critical</button>
+    <button class="filter-btn" onclick="filterCards('HIGH', this)">High</button>
+    <button class="filter-btn" onclick="filterCards('MEDIUM', this)">Medium</button>
 </div>
 
 <!-- FINDINGS -->
 <div class="findings">
-"""
-
-    # Generate each finding card
-    for i, result in enumerate(results):
-        severity  = result.get('severity', 'MEDIUM')
-        verdict   = result.get('verdict', 'NEEDS_REVIEW')
-        sev_color = SEVERITY_COLORS.get(severity, SEVERITY_COLORS['MEDIUM'])
-        ver_color = VERDICT_COLORS.get(verdict, VERDICT_COLORS['NEEDS_REVIEW'])
-
-        # Load screenshots
-        screenshot_html = ''
-        screenshots     = result.get('screenshots', [])
-        if screenshots:
-            screenshot_html = '<div class="screenshots"><h3>📸 Screenshots</h3>'
-            screenshot_html += '<div class="screenshot-grid">'
-            for j, ss_path in enumerate(screenshots):
-                b64 = load_screenshot_b64(ss_path)
-                if b64:
-                    name = os.path.basename(ss_path)
-                    screenshot_html += f'''
-                    <div class="screenshot-item">
-                        <img src="{b64}" alt="Screenshot {j+1}"
-                             onclick="openLightbox(this)">
-                        <div class="screenshot-caption">{name}</div>
-                    </div>'''
-            screenshot_html += '</div></div>'
-
-        html += f"""
-    <div class="finding-card"
-         data-verdict="{verdict}"
-         data-severity="{severity}">
-
-        <!-- Card Header -->
-        <div class="finding-header"
-             style="background:{sev_color['bg']};
-                    border-left:5px solid {sev_color['border']};"
-             onclick="toggleCard(this)">
-            <div class="finding-header-left">
-                <span class="badge"
-                      style="background:{sev_color['badge']}">
-                    {severity}
-                </span>
-                <span class="finding-title">
-                    {result.get('title', 'Unknown Finding')[:80]}
-                </span>
-            </div>
-            <div class="finding-header-right">
-                <span class="verdict-badge"
-                      style="background:{ver_color['bg']};
-                             color:{ver_color['color']};">
-                    {ver_color['icon']} {ver_color['label']}
-                </span>
-                <span class="risk-score"
-                      style="font-size:12px; color:#666;">
-                    Risk: {result.get('risk_score', 0)}/10
-                </span>
-                <span class="chevron">▼</span>
-            </div>
-        </div>
-
-        <!-- Card Body -->
-        <div class="finding-body">
-
-            <!-- Info Grid -->
-            <div class="finding-grid">
-                <div class="info-section">
-                    <h3>Finding Details</h3>
-                    <table class="info-table">
-                        <tr>
-                            <td>ID</td>
-                            <td>{result.get('finding_id', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>Severity</td>
-                            <td><strong style="color:{sev_color['text']}">
-                                {severity}</strong></td>
-                        </tr>
-                        <tr>
-                            <td>CWE</td>
-                            <td>{result.get('cwe', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>OWASP</td>
-                            <td>{result.get('owasp', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>CVSS</td>
-                            <td>{result.get('cvss', 'N/A')}</td>
-                        </tr>
-                    </table>
-                </div>
-
-                <div class="info-section">
-                    <h3>AI Verdict</h3>
-                    <table class="info-table">
-                        <tr>
-                            <td>Verdict</td>
-                            <td><strong style="color:{ver_color['color']}">
-                                {ver_color['icon']} {verdict}</strong></td>
-                        </tr>
-                        <tr>
-                            <td>Confidence</td>
-                            <td>{result.get('confidence', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>Risk Score</td>
-                            <td><strong>{result.get('risk_score', 0)}/10
-                                </strong></td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Verdict Explanation -->
-            <div class="verdict-box">
-                <h3>🧠 Claude AI Analysis</h3>
-                <div class="verdict-content"
-                     style="background:{ver_color['bg']};
-                            color:{ver_color['color']}">
-                    <p><strong>Explanation:</strong>
-                       {result.get('explanation', 'N/A')}</p>
-                    <p><strong>Evidence:</strong>
-                       {result.get('evidence_summary', 'N/A')}</p>
-                </div>
-            </div>
-
-            <!-- Fix Recommendation -->
-            <div class="fix-box">
-                <h3>🔧 Fix Recommendation</h3>
-                <p>{result.get('fix', 'No fix recommendation available.')}</p>
-            </div>
-
-            {screenshot_html}
-
-        </div>
+    <div class="findings-count" id="findings-count">
+        Showing {stats['total']} of {stats['total']} findings
     </div>
-"""
-
-    html += f"""
+    <div id="cards-container">
+        {cards_html if cards_html else '<div class="no-results">No findings to display.</div>'}
+    </div>
 </div>
 
-<!-- FOOTER -->
-<div class="footer">
-    MobSF AI Security Validation Report &nbsp;|&nbsp;
-    Claude AI + MobSF DAST &nbsp;|&nbsp;
-    {timestamp}
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <span class="lightbox-close">&times;</span>
+    <img id="lightbox-img" src="" alt="Screenshot" onclick="event.stopPropagation()">
 </div>
 
 <script>
-    // Toggle card open/close
+    // Toggle card expand/collapse
     function toggleCard(header) {{
-        const body    = header.nextElementSibling;
-        const chevron = header.querySelector('.chevron');
-        body.classList.toggle('open');
-        chevron.classList.toggle('open');
+        var body = header.nextElementSibling;
+        var chevron = header.querySelector('.chevron');
+        if (body.style.display === 'none') {{
+            body.style.display = 'block';
+            chevron.innerHTML = '&#9650;';
+        }} else {{
+            body.style.display = 'none';
+            chevron.innerHTML = '&#9660;';
+        }}
     }}
 
-    // Filter findings
-    function filterFindings(filter, btn) {{
-        // Update active button
-        document.querySelectorAll('.filter-btn').forEach(b => {{
+    // Filter cards
+    function filterCards(filter, btn) {{
+        document.querySelectorAll('.filter-btn').forEach(function(b) {{
             b.classList.remove('active');
         }});
         btn.classList.add('active');
 
-        // Show/hide cards
-        document.querySelectorAll('.finding-card').forEach(card => {{
-            if (filter === 'all') {{
-                card.style.display = 'block';
-            }} else if (['CONFIRMED','FALSE_POSITIVE','NEEDS_REVIEW']
-                        .includes(filter)) {{
-                card.style.display =
-                    card.dataset.verdict === filter ? 'block' : 'none';
-            }} else {{
-                card.style.display =
-                    card.dataset.severity === filter ? 'block' : 'none';
-            }}
+        var cards   = document.querySelectorAll('.card');
+        var visible = 0;
+        cards.forEach(function(card) {{
+            var sev = card.getAttribute('data-severity');
+            var vrd = card.getAttribute('data-verdict');
+            var show = (filter === 'ALL') || (sev === filter) || (vrd === filter);
+            card.style.display = show ? 'block' : 'none';
+            if (show) visible++;
         }});
+
+        var total = cards.length;
+        document.getElementById('findings-count').textContent =
+            'Showing ' + visible + ' of ' + total + ' findings';
     }}
 
     // Lightbox
-    function openLightbox(img) {{
-        document.getElementById('lightbox-img').src = img.src;
+    function openLightbox(src) {{
+        document.getElementById('lightbox-img').src = src;
         document.getElementById('lightbox').classList.add('open');
-        event.stopPropagation();
     }}
-
     function closeLightbox() {{
         document.getElementById('lightbox').classList.remove('open');
     }}
-
     document.addEventListener('keydown', function(e) {{
         if (e.key === 'Escape') closeLightbox();
     }});
 </script>
-
 </body>
-</html>"""
+</html>'''
 
-    # Save report
-    report_path = f'{OUTPUT_DIR}/validation_report.html'
+    return html
+
+# -----------------------------------------
+# SAVE REPORT
+# -----------------------------------------
+
+def save_report(html):
+    report_path = os.path.join(OUTPUT_DIR, 'validation_report.html')
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(html)
-
-    print(f'✅ HTML Report saved: {report_path}')
+    print(f'  [OK] Report saved: {report_path}')
     return report_path
 
-
-# ─────────────────────────────────────────
+# -----------------------------------------
 # MAIN
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 if __name__ == '__main__':
     print('\n' + '='*55)
     print('  Generating Validation Report')
     print('='*55)
 
-    if not os.path.exists(RESULTS_JSON):
-        print(f'❌ Results file not found: {RESULTS_JSON}')
-        sys.exit(1)
+    print(f'  Results file : {RESULTS_JSON}')
+    print(f'  Output dir   : {OUTPUT_DIR}')
+    print(f'  Package      : {PACKAGE_NAME}')
 
-    with open(RESULTS_JSON) as f:
-        results = json.load(f)
+    results = load_results()
+    stats   = get_stats(results)
 
-    print(f'📊 Loaded {len(results)} validated findings')
+    print(f'\n  Stats:')
+    print(f'    Total     : {stats["total"]}')
+    print(f'    Critical  : {stats["critical"]}')
+    print(f'    High      : {stats["high"]}')
+    print(f'    Medium    : {stats["medium"]}')
+    print(f'    Confirmed : {stats["confirmed"]}')
+    print(f'    False Pos : {stats["false_pos"]}')
+    print(f'    Review    : {stats["needs_rev"]}')
+    print(f'    Avg Risk  : {stats["avg_risk"]}/10')
 
-    report_path = generate_report(results)
+    html = generate_html(results, stats)
+    path = save_report(html)
 
-    print(f'\n✅ Report ready: {report_path}')
-    print('   Open in browser to view!')
+    print(f'\n[OK] Report generation complete!')
+    print(f'     Open in browser: {path}')
+    print('='*55)
     sys.exit(0)
