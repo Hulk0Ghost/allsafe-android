@@ -87,15 +87,25 @@ def get_findings(sast_data):
                 'source':      'code_analysis'
             })
 
-    # From binary analysis
-    binary = sast_data.get('binary_analysis', {})
-    for rule_id, finding in binary.items():
+    # From binary analysis (can be list OR dict depending on MobSF version)
+    binary_raw = sast_data.get('binary_analysis', [])
+
+    # Normalize to list of dicts
+    if isinstance(binary_raw, dict):
+        binary_list = list(binary_raw.values())
+    elif isinstance(binary_raw, list):
+        binary_list = binary_raw
+    else:
+        binary_list = []
+
+    for i, finding in enumerate(binary_list):
         if isinstance(finding, dict):
             severity = finding.get('severity', '').upper()
             if severity in SEVERITY_FILTER:
                 findings.append({
-                    'id':          f'binary_{rule_id}',
-                    'title':       finding.get('description', rule_id),
+                    'id':          f'binary_{i}',
+                    'title':       finding.get('description',
+                                   finding.get('name', f'Binary Finding {i}')),
                     'severity':    severity,
                     'cvss':        finding.get('cvss', 0),
                     'cwe':         finding.get('cwe', 'N/A'),
