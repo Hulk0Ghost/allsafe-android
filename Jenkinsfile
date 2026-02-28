@@ -228,8 +228,6 @@ pipeline {
                     bat """
                         if not exist validation_output mkdir validation_output
                         cd scripts
-                        set PYTHONIOENCODING=utf-8
-                        set PYTHONLEGACYWINDOWSSTDIO=utf-8
                         set MOBSF_SERVER=http://localhost:8000
                         set MOBSF_API_KEY=%MOBSF_API_KEY%
                         set CLAUDE_API_KEY=%GROQ_API_KEY%
@@ -250,8 +248,6 @@ pipeline {
                     def ws = pwd()
                     bat """
                         cd scripts
-                        set PYTHONIOENCODING=utf-8
-                        set PYTHONLEGACYWINDOWSSTDIO=utf-8
                         set OUTPUT_DIR=${ws}\\validation_output
                         set PACKAGE_NAME=infosecadventures.allsafe
                         python report_generator.py ${ws}\\validation_output\\validation_results.json
@@ -260,6 +256,8 @@ pipeline {
                 echo 'HTML report generated!'
             }
         }
+
+    }
 
     // ─── POST ACTIONS ───────────────────────
     post {
