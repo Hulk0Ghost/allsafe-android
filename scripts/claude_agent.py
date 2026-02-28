@@ -252,6 +252,7 @@ Respond with ONLY this JSON (raw, no markdown):
             'get_http_logs':            lambda: self.tools.get_http_logs(),
             'get_frida_logs':           lambda: self.tools.get_frida_logs(),
             'run_frida_script':         lambda: self.tools.run_frida_script(),
+            'run_named_frida_script':   lambda: self.tools.run_named_frida_script(params.get('script_name', 'api_monitor')),
             'get_logcat':               lambda: self.tools.get_logcat(),
             'test_exported_activities': lambda: self.tools.test_exported_activities(),
         }
@@ -314,22 +315,96 @@ Respond with ONLY this JSON (raw, no markdown):
 
         evidence_str = '\n'.join(evidence_items) if evidence_items else 'No DAST evidence collected'
 
+        # ── Evidence quality pre-check ──────────────────────────────
+        all_failed    = all(not r['result'].get('success') for r in execution_results) \
+                        if execution_results else True
+        is_manifest   = finding.get('source') == 'manifest_analysis'
+        tool_failures = [
+            f"{r['tool']}: {r['result'].get('error', 'no data')}"
+            for r in execution_results if not r['result'].get('success')
+        ]
+
+        # Manifest findings confirmed by manifest text alone — no DAST needed
+        if is_manifest and all_failed:
+            print(f'  [INFO] Manifest finding — confirming from SAST data (all DAST tools failed)')
+            return {
+                'verdict':          'CONFIRMED',
+                'confidence':       'HIGH',
+                'explanation':      (
+                    f'This is a manifest configuration finding. The AndroidManifest.xml '
+                    f'contains {finding.get("description", finding["title"])}. '
+                    f'Manifest attributes are facts — they do not require DAST confirmation. '
+                    f'DAST tools failed but this does not affect the verdict.'
+                ),
+                'evidence_summary': f'SAST manifest analysis: {finding["description"]}',
+                'fix_recommendation': f'Remove or disable the insecure manifest flag. See CWE {finding.get("cwe", "N/A")}.',
+                'risk_score':       7 if finding['severity'] == 'HIGH' else
+                                    9 if finding['severity'] == 'CRITICAL' else 4,
+                'exploitability':   (
+                    'Manifest flags take effect at install time. No special conditions needed. '
+                    'Any attacker with device access can exploit this configuration.'
+                ),
+                'screenshots':      screenshots
+            }
+
+        # All tools failed and it is NOT a manifest finding → NEEDS_REVIEW
+        if all_failed and execution_results:
+            print(f'  [INFO] All DAST tools failed — setting NEEDS_REVIEW')
+            return {
+                'verdict':          'NEEDS_REVIEW',
+                'confidence':       'LOW',
+                'explanation':      (
+                    f'All DAST tools failed during validation. '
+                    f'This does NOT mean the finding is a false positive — '
+                    f'it means there is insufficient dynamic evidence to confirm or deny it. '
+                    f'Tool failures: {"; ".join(tool_failures[:3])}'
+                ),
+                'evidence_summary': f'All tools failed: {", ".join(tool_failures[:3])}',
+                'fix_recommendation': f'Manual review required. {finding.get("description", "")}',
+                'risk_score':       5,
+                'exploitability':   'Unknown — requires manual testing to determine exploitability.',
+                'screenshots':      screenshots
+            }
+        # ── End pre-check — proceed to Groq for ambiguous cases ─────
+
         system_prompt = ANDROID_SECURITY_CONTEXT + """
 
 Your task: analyze the DAST evidence and deliver a precise verdict on whether this SAST finding is real.
 
+══════════════════════════════════════════════════
+CRITICAL RULE — READ BEFORE ANYTHING ELSE:
+If DAST tools failed, timed out, or returned errors →
+verdict MUST be NEEDS_REVIEW with LOW confidence.
+NEVER give FALSE_POSITIVE because tools failed.
+Tool failure = insufficient evidence, NOT proof of safety.
+Absence of evidence is NOT evidence of absence.
+══════════════════════════════════════════════════
+
+MANIFEST FINDINGS RULE:
+For findings from source 'manifest_analysis' — the manifest
+IS the evidence. If the finding description states that
+android:debuggable=true, android:allowBackup=true,
+android:exported=true, or similar flags are SET in the
+AndroidManifest.xml — this is CONFIRMED regardless of DAST.
+These are configuration facts, not code paths.
+You do NOT need DAST to confirm a manifest attribute exists.
+
 VERDICT RULES:
-- CONFIRMED: Evidence strongly supports the finding is exploitable
-- FALSE_POSITIVE: Evidence or context suggests the code is safe, unreachable, or library code
-- NEEDS_REVIEW: Evidence is ambiguous, insufficient, or requires manual testing
+- CONFIRMED:      DAST evidence actively supports the finding,
+                  OR it is a manifest/config fact
+- FALSE_POSITIVE: You have POSITIVE evidence the code path is
+                  unreachable, guarded, library-only, or test-only
+- NEEDS_REVIEW:   Evidence is ambiguous, tools failed, or finding
+                  requires manual testing to confirm
 
 CONFIDENCE RULES:
-- HIGH: Clear definitive evidence for/against
+- HIGH:   Clear definitive evidence for/against
 - MEDIUM: Some evidence but not conclusive
-- LOW: No useful DAST evidence collected (tool failures, no data)
+- LOW:    Tools failed or no useful data collected — always
+          pair LOW confidence with NEEDS_REVIEW verdict
 
 RISK SCORE RULES (0-10):
-- 9-10: Actively exploitable, no user interaction needed, leads to RCE/data theft
+- 9-10: Actively exploitable, no user interaction, RCE/data theft
 - 7-8:  Exploitable with some conditions, significant data exposure
 - 5-6:  Requires specific conditions, limited impact
 - 3-4:  Theoretical risk, hard to exploit in practice
@@ -362,7 +437,10 @@ SEVERITY JUSTIFICATION:
 DAST EVIDENCE COLLECTED:
 {evidence_str}
 
-Based on ALL of the above, give your verdict. Be decisive - avoid NEEDS_REVIEW unless truly ambiguous.
+Based on ALL of the above, give your verdict.
+Be accurate. NEEDS_REVIEW is the correct answer when evidence is insufficient.
+FALSE_POSITIVE requires positive proof the finding is wrong — not just failed tools.
+CONFIRMED is appropriate for manifest/config facts even without successful DAST.
 Respond with ONLY this JSON (raw, no markdown):
 
 {{

@@ -12,12 +12,13 @@ import os
 
 class MobSFTools:
 
-    def __init__(self, server, api_key, hash_val, output_dir='validation_output'):
-        self.server     = server.rstrip('/')
-        self.api_key    = api_key
-        self.hash       = hash_val
-        self.output_dir = output_dir
-        self.headers    = {'Authorization': api_key}
+    def __init__(self, server, api_key, hash_val, output_dir='validation_output', package_name=''):
+        self.server        = server.rstrip('/')
+        self.api_key       = api_key
+        self.hash          = hash_val
+        self.output_dir    = output_dir
+        self._package_name = package_name
+        self.headers       = {'Authorization': api_key}
         os.makedirs(os.path.join(output_dir, 'screenshots'), exist_ok=True)
         os.makedirs(os.path.join(output_dir, 'pcap'),        exist_ok=True)
         os.makedirs(os.path.join(output_dir, 'logs'),        exist_ok=True)
@@ -160,7 +161,10 @@ class MobSFTools:
                 data={'hash': self.hash},
                 timeout=20
             )
-            return {'success': True, 'response': r.json()}
+            resp = r.json() if r.content else {}
+            if r.status_code != 200:
+                return {'success': False, 'error': f'HTTP {r.status_code}: {resp}'}
+            return {'success': True, 'response': resp}
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
@@ -173,7 +177,10 @@ class MobSFTools:
                 data={'hash': self.hash},
                 timeout=20
             )
-            return {'success': True, 'response': r.json()}
+            resp = r.json() if r.content else {}
+            if r.status_code != 200:
+                return {'success': False, 'error': f'HTTP {r.status_code}: {resp}'}
+            return {'success': True, 'response': resp}
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
@@ -219,16 +226,85 @@ class MobSFTools:
             return {'success': False, 'error': str(e)}
 
     def run_frida_script(self, script_type='default'):
-        print(f'  [*] Running Frida script: {script_type}')
+        """
+        Run default Frida hooks via the MobSF instrument endpoint.
+        Hooks: API Monitor, SSL Pinning Bypass, Root Bypass,
+               Debugger Check Bypass, Clipboard Monitor.
+        After injecting, waits 5s then auto-reads Frida logs.
+        """
+        print(f'  [*] Running Frida instrumentation: {script_type}')
         try:
+            default_hooks = (
+                'api_monitor,'
+                'ssl_pinning_bypass,'
+                'root_bypass,'
+                'debugger_check_bypass,'
+                'clipboard_monitor'
+            )
             r = requests.post(
-                f'{self.server}/api/v1/android/frida_view',
+                f'{self.server}/api/v1/android/instrument',
                 headers=self.headers,
-                data={'hash': self.hash, 'default': 1},
+                data={
+                    'hash':          self.hash,
+                    'default_hooks': default_hooks,
+                    'auxiliary_hooks': ''
+                },
                 timeout=30
             )
+            resp_data = r.json() if r.content else {}
+
+            if r.status_code not in (200, 201):
+                return {
+                    'success': False,
+                    'error':   f'HTTP {r.status_code}: {resp_data}'
+                }
+
+            # Wait for hooks to capture data, then read logs
             time.sleep(5)
-            return {'success': True, 'response': r.json()}
+            logs = self.get_frida_logs()
+
+            return {
+                'success':  True,
+                'response': resp_data,
+                'logs':     logs.get('data', {})
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def run_named_frida_script(self, script_name):
+        """
+        Run a specific named Frida script from MobSF's library.
+        Available: crypto-aes-key, crypto-trace-cipher, audit-webview,
+                   crypto-dump-keystore, bypass-emulator-detection, etc.
+        """
+        print(f'  [*] Running named Frida script: {script_name}')
+        try:
+            r = requests.post(
+                f'{self.server}/api/v1/android/instrument',
+                headers=self.headers,
+                data={
+                    'hash':            self.hash,
+                    'default_hooks':   '',
+                    'auxiliary_hooks': script_name
+                },
+                timeout=30
+            )
+            resp_data = r.json() if r.content else {}
+
+            if r.status_code not in (200, 201):
+                return {
+                    'success': False,
+                    'error':   f'HTTP {r.status_code}: {resp_data}'
+                }
+
+            time.sleep(5)
+            logs = self.get_frida_logs()
+
+            return {
+                'success':  True,
+                'response': resp_data,
+                'logs':     logs.get('data', {})
+            }
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
@@ -260,7 +336,14 @@ class MobSFTools:
     # -----------------------------------------
 
     def test_exported_activities(self):
+        """
+        Test all exported activities via MobSF's exported activity tester,
+        with an ADB fallback to enumerate them directly.
+        """
         print('  [*] Testing exported activities...')
+        results = []
+
+        # Step 1: get activity list from MobSF
         try:
             r = requests.post(
                 f'{self.server}/api/v1/android/activity',
@@ -268,9 +351,40 @@ class MobSFTools:
                 data={'hash': self.hash},
                 timeout=30
             )
-            return {'success': True, 'data': r.json()}
+            if r.status_code == 200:
+                activity_data = r.json()
+                activities    = activity_data.get('activities', [])
+                print(f'  [*] Found {len(activities)} activities via MobSF')
+                results.append({'source': 'mobsf', 'data': activity_data})
+            else:
+                print(f'  [WARN] MobSF activity endpoint returned HTTP {r.status_code}')
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            print(f'  [WARN] MobSF activity endpoint failed: {e}')
+
+        # Step 2: ADB fallback — enumerate exported activities directly
+        try:
+            adb_result = subprocess.run(
+                ['adb', 'shell', 'dumpsys', 'package', self._package_name or ''],
+                timeout=15, capture_output=True, text=True
+            )
+            if adb_result.returncode == 0:
+                output = adb_result.stdout
+                # Parse exported activities from dumpsys
+                exported = []
+                for line in output.splitlines():
+                    line = line.strip()
+                    if 'Activity' in line and 'exported=true' in line:
+                        exported.append(line)
+                    elif line.startswith('android.intent.action.MAIN'):
+                        exported.append(line)
+                results.append({'source': 'adb_dumpsys', 'exported_activities': exported})
+                print(f'  [*] ADB found {len(exported)} exported activities')
+        except Exception as e:
+            print(f'  [WARN] ADB exported activity check failed: {e}')
+
+        if results:
+            return {'success': True, 'data': results}
+        return {'success': False, 'error': 'All exported activity checks failed'}
 
     # -----------------------------------------
     # TOOL LIST FOR AI
@@ -278,18 +392,19 @@ class MobSFTools:
 
     def get_tool_list(self):
         return {
-            'start_activity':           'Launch specific app activity by name',
-            'launch_app':               'Launch app from home screen',
+            'start_activity':           'Launch specific app activity by its full class name',
+            'launch_app':               'Launch app from home screen via adb monkey',
             'stop_app':                 'Force stop the app',
-            'adb_input_text':           'Type text into focused input field',
+            'adb_input_text':           'Type text into the focused input field',
             'adb_tap':                  'Tap on screen at x,y coordinates',
-            'adb_press_key':            'Press Android key (66=Enter, 4=Back)',
+            'adb_press_key':            'Press Android key (66=Enter, 4=Back, 3=Home)',
             'take_screenshot':          'Capture emulator screenshot',
-            'start_pcap':               'Start network packet capture',
+            'start_pcap':               'Start network packet capture (call before exercising app)',
             'stop_pcap':                'Stop network packet capture',
-            'get_http_logs':            'Get all captured HTTP traffic',
-            'get_frida_logs':           'Get Frida runtime hook logs',
-            'run_frida_script':         'Run Frida instrumentation on app',
-            'get_logcat':               'Get Android system logs',
-            'test_exported_activities': 'Test all exported app activities',
+            'get_http_logs':            'Get all captured HTTP/HTTPS traffic (call after stop_pcap)',
+            'get_frida_logs':           'Get Frida runtime hook logs (call after run_frida_script)',
+            'run_frida_script':         'Inject default Frida hooks: API monitor, SSL bypass, root bypass, debugger bypass, clipboard monitor',
+            'run_named_frida_script':   'Run a specific Frida script by name (e.g. crypto-aes-key, audit-webview, crypto-trace-cipher)',
+            'get_logcat':               'Get Android system logs (useful for crash info, debug output, data leakage)',
+            'test_exported_activities': 'Enumerate and test all exported app activities',
         }

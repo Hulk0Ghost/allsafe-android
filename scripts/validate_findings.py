@@ -139,7 +139,19 @@ def extract_manifest_analysis(sast_data):
                 'detail':      item.get('component', '')
             })
 
-    # Explicit flags
+    # Explicit flags — only add if NOT already covered by manifest_findings above.
+    # Use keyword matching (not exact title) to catch MobSF's own wording variants,
+    # e.g. "Debug Enabled For App [android:debuggable=true]" covers our "DEBUG FLAG ENABLED".
+    FLAG_KEYWORDS = {
+        'android:debuggable':            ['debuggable', 'debug enabled', 'debug flag'],
+        'android:allowBackup':           ['backup', 'allowbackup', 'allow backup'],
+        'android:usesCleartextTraffic':  ['cleartext', 'clear text', 'cleartraffic'],
+        'android:exported=true':         ['exported component', 'exported activity',
+                                          'exported service', 'exported receiver'],
+        'android:networkSecurityConfig': ['network security config', 'networksecurityconfig',
+                                          'networksecurity'],
+    }
+
     flags = {
         'android:debuggable':            ('DEBUG FLAG ENABLED',            'CRITICAL', 'CWE-489'),
         'android:allowBackup':           ('BACKUP ENABLED',                'HIGH',     'CWE-312'),
@@ -150,21 +162,30 @@ def extract_manifest_analysis(sast_data):
 
     manifest_str = json.dumps(manifest).lower()
     for flag, (title, sev, cwe) in flags.items():
-        if flag.lower() in manifest_str:
-            # Avoid duplicates already caught above
-            already = any(f['title'] == title for f in findings)
-            if not already and sev in SEVERITY_FILTER:
-                findings.append({
-                    'id':          f'manifest_flag_{flag.replace(":", "_")}',
-                    'title':       title,
-                    'severity':    sev,
-                    'cvss':        0,
-                    'cwe':         cwe,
-                    'owasp':       'M1: Improper Platform Usage',
-                    'description': f'AndroidManifest.xml contains {flag}',
-                    'files':       {},
-                    'source':      'manifest_analysis'
-                })
+        if flag.lower() not in manifest_str:
+            continue
+        if sev not in SEVERITY_FILTER:
+            continue
+
+        # Check if ANY existing finding already covers this flag via keywords
+        keywords = FLAG_KEYWORDS.get(flag, [title.lower()])
+        already  = any(
+            any(kw in f['title'].lower() or kw in f['description'].lower()
+                for kw in keywords)
+            for f in findings
+        )
+        if not already:
+            findings.append({
+                'id':          f'manifest_flag_{flag.replace(":", "_").replace("=", "_")}',
+                'title':       title,
+                'severity':    sev,
+                'cvss':        0,
+                'cwe':         cwe,
+                'owasp':       'M1: Improper Platform Usage',
+                'description': f'AndroidManifest.xml contains {flag}',
+                'files':       {},
+                'source':      'manifest_analysis'
+            })
 
     return findings
 
@@ -538,10 +559,11 @@ if __name__ == '__main__':
     # Init MobSF tools
     print('\n[*] Initializing MobSF tools...')
     mobsf = MobSFTools(
-        server     = MOBSF_SERVER,
-        api_key    = MOBSF_API_KEY,
-        hash_val   = FILE_HASH,
-        output_dir = OUTPUT_DIR
+        server       = MOBSF_SERVER,
+        api_key      = MOBSF_API_KEY,
+        hash_val     = FILE_HASH,
+        output_dir   = OUTPUT_DIR,
+        package_name = PACKAGE_NAME
     )
 
     # Init AI agent
