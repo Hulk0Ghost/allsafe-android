@@ -248,7 +248,12 @@ pipeline {
                 echo 'Generating HTML validation report...'
                 script {
                     def ws = pwd()
+                    // Ensure validation_results.json exists (created by Stage 12 even if 0 findings)
                     bat """
+                        if not exist "${ws}\\validation_output\\validation_results.json" (
+                            echo [] > "${ws}\\validation_output\\validation_results.json"
+                            echo [WARN] Created empty results file as fallback
+                        )
                         cd scripts
                         set PYTHONIOENCODING=utf-8
                         set PYTHONLEGACYWINDOWSSTDIO=utf-8
