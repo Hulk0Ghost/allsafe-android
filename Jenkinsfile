@@ -137,7 +137,32 @@ pipeline {
         }
 
         // ─── STAGE 8 ────────────────────────────
-        stage('8. Stop Dynamic Analysis') {
+        // AI Validate runs HERE while DAST session is still ACTIVE
+        // Tools (logcat, pcap, frida) need a live session to work
+        stage('8. AI Validate Findings') {
+            steps {
+                echo 'Running AI validation with Groq (DAST session active)...'
+                script {
+                    def ws = pwd()
+                    bat """
+                        if not exist validation_output mkdir validation_output
+                        cd scripts
+                        set PYTHONIOENCODING=utf-8
+                        set PYTHONLEGACYWINDOWSSTDIO=utf-8
+                        set MOBSF_SERVER=http://localhost:8000
+                        set MOBSF_API_KEY=%MOBSF_API_KEY%
+                        set CLAUDE_API_KEY=%GROQ_API_KEY%
+                        set PACKAGE_NAME=infosecadventures.allsafe
+                        set OUTPUT_DIR=${ws}\\validation_output
+                        python validate_findings.py ${ws}\\sast_report.json ${ws}\\dast_report.json %FILE_HASH%
+                    """
+                }
+                echo 'AI validation complete!'
+            }
+        }
+
+        // ─── STAGE 9 ────────────────────────────
+        stage('9. Stop Dynamic Analysis') {
             steps {
                 echo 'Stopping DAST...'
                 script {
@@ -157,8 +182,8 @@ pipeline {
             }
         }
 
-        // ─── STAGE 9 ────────────────────────────
-        stage('9. Fetch DAST Report') {
+        // ─── STAGE 10 ───────────────────────────
+        stage('10. Fetch DAST Report') {
             steps {
                 echo 'Fetching DAST report...'
                 bat '''
@@ -172,8 +197,8 @@ pipeline {
             }
         }
 
-        // ─── STAGE 10 ───────────────────────────
-        stage('10. Download PDF Report') {
+        // ─── STAGE 11 ───────────────────────────
+        stage('11. Download PDF Report') {
             steps {
                 echo 'Downloading PDF report...'
                 bat '''
@@ -187,8 +212,8 @@ pipeline {
             }
         }
 
-        // ─── STAGE 11 ───────────────────────────
-        stage('11. Combined Security Gate') {
+        // ─── STAGE 12 ───────────────────────────
+        stage('12. Combined Security Gate') {
             steps {
                 echo 'Evaluating combined SAST + DAST score...'
                 script {
@@ -216,29 +241,6 @@ pipeline {
 
                     env.COMBINED_SCORE = combinedScore.toString()
                 }
-            }
-        }
-
-        // ─── STAGE 12 ───────────────────────────
-        stage('12. AI Validate Findings') {
-            steps {
-                echo 'Running AI validation with Groq...'
-                script {
-                    def ws = pwd()
-                    bat """
-                        if not exist validation_output mkdir validation_output
-                        cd scripts
-                        set PYTHONIOENCODING=utf-8
-                        set PYTHONLEGACYWINDOWSSTDIO=utf-8
-                        set MOBSF_SERVER=http://localhost:8000
-                        set MOBSF_API_KEY=%MOBSF_API_KEY%
-                        set CLAUDE_API_KEY=%GROQ_API_KEY%
-                        set PACKAGE_NAME=infosecadventures.allsafe
-                        set OUTPUT_DIR=${ws}\\validation_output
-                        python validate_findings.py ${ws}\\sast_report.json ${ws}\\dast_report.json %FILE_HASH%
-                    """
-                }
-                echo 'AI validation complete!'
             }
         }
 
