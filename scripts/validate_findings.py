@@ -1,20 +1,25 @@
+# -*- coding: utf-8 -*-
 """
 Main Orchestrator
 Reads SAST report, filters CRITICAL/HIGH/MEDIUM,
-validates each finding using Claude + MobSF DAST
+validates each finding using AI + MobSF DAST
 """
 
 import json
 import os
 import sys
 import time
+
+# Fix Windows encoding
+sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
+
 from mobsf_tools import MobSFTools
 from claude_agent import ClaudeAgent
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # CONFIG
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 MOBSF_SERVER   = os.getenv('MOBSF_SERVER',   'http://localhost:8000')
 MOBSF_API_KEY  = os.getenv('MOBSF_API_KEY',  '')
@@ -29,34 +34,34 @@ FILE_HASH      = sys.argv[3] if len(sys.argv) > 3 else ''
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # LOAD REPORTS
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 def load_reports():
-    print('\n📂 Loading reports...')
+    print('\n[*] Loading reports...')
 
-    with open(SAST_REPORT) as f:
+    with open(SAST_REPORT, encoding='utf-8') as f:
         sast = json.load(f)
-    print(f'  ✅ SAST report loaded')
+    print('  [OK] SAST report loaded')
 
     dast = {}
     try:
-        with open(DAST_REPORT) as f:
+        with open(DAST_REPORT, encoding='utf-8') as f:
             dast = json.load(f)
-        print(f'  ✅ DAST report loaded')
+        print('  [OK] DAST report loaded')
     except Exception:
-        print(f'  ⚠️ DAST report not found, continuing...')
+        print('  [WARN] DAST report not found, continuing...')
 
     return sast, dast
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # FILTER CRITICAL + HIGH + MEDIUM FINDINGS
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 def get_findings(sast_data):
-    print('\n🔍 Filtering CRITICAL/HIGH/MEDIUM findings...')
+    print('\n[*] Filtering CRITICAL/HIGH/MEDIUM findings...')
     findings = []
 
     SEVERITY_FILTER = ['CRITICAL', 'HIGH', 'MEDIUM']
@@ -100,7 +105,7 @@ def get_findings(sast_data):
                     'source':      'binary_analysis'
                 })
 
-    # Sort: CRITICAL → HIGH → MEDIUM
+    # Sort: CRITICAL -> HIGH -> MEDIUM
     findings.sort(key=lambda x: SEVERITY_ORDER.get(x['severity'], 3))
 
     # Print counts
@@ -114,12 +119,11 @@ def get_findings(sast_data):
     return findings
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # GET SOURCE CODE SNIPPET
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 def get_source_snippet(finding, workspace='.'):
-    """Try to read actual source code for context"""
     snippets = []
     files    = finding.get('files', {})
 
@@ -142,7 +146,7 @@ def get_source_snippet(finding, workspace='.'):
                             end      = min(len(lines), line_num + 5)
                             snippet  = ''.join(lines[start:end])
                             snippets.append(
-                                f'File: {filepath} (around line {line_num}):\n'
+                                f'File: {filepath} (line {line_num}):\n'
                                 f'```\n{snippet}\n```'
                             )
                         except Exception:
@@ -153,37 +157,40 @@ def get_source_snippet(finding, workspace='.'):
     return '\n\n'.join(snippets) if snippets else None
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # SAVE RESULTS
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 def save_results(all_results):
-    """Save validation results to JSON"""
     output = []
     for r in all_results:
         output.append({
             'finding_id':  r['finding']['id'],
             'title':       r['finding']['title'],
             'severity':    r['finding']['severity'],
+            'cwe':         r['finding'].get('cwe', 'N/A'),
+            'owasp':       r['finding'].get('owasp', 'N/A'),
+            'cvss':        r['finding'].get('cvss', 0),
             'verdict':     r['verdict']['verdict'],
             'confidence':  r['verdict']['confidence'],
             'explanation': r['verdict']['explanation'],
+            'evidence_summary': r['verdict'].get('evidence_summary', ''),
             'fix':         r['verdict']['fix_recommendation'],
             'risk_score':  r['verdict']['risk_score'],
             'screenshots': r['verdict'].get('screenshots', [])
         })
 
-    results_path = f'{OUTPUT_DIR}/validation_results.json'
-    with open(results_path, 'w') as f:
+    results_path = os.path.join(OUTPUT_DIR, 'validation_results.json')
+    with open(results_path, 'w', encoding='utf-8') as f:
         json.dump(output, f, indent=2)
 
-    print(f'\n✅ Results saved: {results_path}')
+    print(f'\n  [OK] Results saved: {results_path}')
     return results_path
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # PRINT SUMMARY
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 def print_summary(all_results):
     print('\n' + '='*55)
@@ -197,70 +204,75 @@ def print_summary(all_results):
     needs_rev = [r for r in all_results
                  if r['verdict']['verdict'] == 'NEEDS_REVIEW']
 
-    print(f'  Total Findings:    {len(all_results)}')
-    print(f'  ✅ Confirmed:      {len(confirmed)}')
-    print(f'  ❌ False Positive: {len(false_pos)}')
-    print(f'  🔵 Needs Review:   {len(needs_rev)}')
+    print(f'  Total Findings : {len(all_results)}')
+    print(f'  Confirmed      : {len(confirmed)}')
+    print(f'  False Positive : {len(false_pos)}')
+    print(f'  Needs Review   : {len(needs_rev)}')
     print('='*55)
 
     if confirmed:
-        print('\n  ✅ CONFIRMED FINDINGS:')
+        print('\n  CONFIRMED FINDINGS:')
         for r in confirmed:
             print(f'    [{r["finding"]["severity"]}] '
                   f'{r["finding"]["title"][:50]} '
                   f'(Risk: {r["verdict"]["risk_score"]}/10)')
 
     if false_pos:
-        print('\n  ❌ FALSE POSITIVES:')
+        print('\n  FALSE POSITIVES:')
         for r in false_pos:
             print(f'    [{r["finding"]["severity"]}] '
                   f'{r["finding"]["title"][:50]}')
 
     if needs_rev:
-        print('\n  🔵 NEEDS MANUAL REVIEW:')
+        print('\n  NEEDS MANUAL REVIEW:')
         for r in needs_rev:
             print(f'    [{r["finding"]["severity"]}] '
                   f'{r["finding"]["title"][:50]}')
 
-    print('\n  📁 Reports saved in:', OUTPUT_DIR)
+    print(f'\n  Reports saved in: {OUTPUT_DIR}')
     print('='*55)
 
 
-# ─────────────────────────────────────────
+# -----------------------------------------
 # MAIN
-# ─────────────────────────────────────────
+# -----------------------------------------
 
 if __name__ == '__main__':
 
     print('\n' + '='*55)
-    print('  MobSF SAST Validation with Claude AI')
+    print('  MobSF SAST Validation with AI')
     print('='*55)
 
     # Validate config
     if not MOBSF_API_KEY:
-        print('❌ MOBSF_API_KEY not set!')
+        print('[ERROR] MOBSF_API_KEY not set!')
         sys.exit(1)
 
     if not CLAUDE_API_KEY:
-        print('❌ CLAUDE_API_KEY not set!')
+        print('[ERROR] CLAUDE_API_KEY (Groq key) not set!')
         sys.exit(1)
 
     if not FILE_HASH:
-        print('❌ FILE_HASH not provided!')
+        print('[ERROR] FILE_HASH not provided!')
         sys.exit(1)
+
+    print(f'  MOBSF_SERVER : {MOBSF_SERVER}')
+    print(f'  PACKAGE      : {PACKAGE_NAME}')
+    print(f'  FILE_HASH    : {FILE_HASH}')
+    print(f'  OUTPUT_DIR   : {OUTPUT_DIR}')
 
     # Load reports
     sast, dast = load_reports()
 
-    # Get CRITICAL/HIGH/MEDIUM findings
+    # Get findings
     findings = get_findings(sast)
 
     if not findings:
-        print('\n✅ No CRITICAL/HIGH/MEDIUM findings — pipeline passes!')
+        print('\n[OK] No CRITICAL/HIGH/MEDIUM findings - pipeline passes!')
         sys.exit(0)
 
     # Init MobSF tools
-    print('\n🔧 Initializing MobSF tools...')
+    print('\n[*] Initializing MobSF tools...')
     mobsf = MobSFTools(
         server     = MOBSF_SERVER,
         api_key    = MOBSF_API_KEY,
@@ -268,8 +280,8 @@ if __name__ == '__main__':
         output_dir = OUTPUT_DIR
     )
 
-    # Init Claude agent
-    print('🧠 Initializing Claude AI agent...')
+    # Init AI agent
+    print('[*] Initializing AI agent (Groq)...')
     agent = ClaudeAgent(
         api_key      = CLAUDE_API_KEY,
         mobsf_tools  = mobsf,
@@ -281,7 +293,8 @@ if __name__ == '__main__':
     total       = len(findings)
 
     for i, finding in enumerate(findings):
-        print(f'\n[{i+1}/{total}] Processing finding...')
+        print(f'\n[{i+1}/{total}] Processing: '
+              f'[{finding["severity"]}] {finding["title"][:50]}')
 
         # Get source code context
         snippet = get_source_snippet(finding)
@@ -290,10 +303,10 @@ if __name__ == '__main__':
         result = agent.validate_finding(finding, snippet)
         all_results.append(result)
 
-        # Small delay between findings
+        # Delay between findings
         if i < total - 1:
-            print('  ⏳ Waiting before next finding...')
-            time.sleep(3)
+            print('  [*] Waiting before next finding...')
+            time.sleep(2)
 
     # Save results
     save_results(all_results)
@@ -301,5 +314,5 @@ if __name__ == '__main__':
     # Print summary
     print_summary(all_results)
 
-    print('\n✅ Validation complete! Proceeding to report generation...')
+    print('\n[OK] Validation complete! Proceeding to report generation...')
     sys.exit(0)
