@@ -154,7 +154,7 @@ pipeline {
                         set CLAUDE_API_KEY=%GROQ_API_KEY%
                         set PACKAGE_NAME=infosecadventures.allsafe
                         set OUTPUT_DIR=${ws}\\validation_output
-                        python validate_findings.py ${ws}\\sast_report.json ${ws}\\dast_report.json %FILE_HASH%
+                        python -u validate_findings.py ${ws}\\sast_report.json ${ws}\\dast_report.json %FILE_HASH% 2>&1
                     """
                 }
                 echo 'AI validation complete!'
@@ -261,7 +261,7 @@ pipeline {
                         set PYTHONLEGACYWINDOWSSTDIO=utf-8
                         set OUTPUT_DIR=${ws}\\validation_output
                         set PACKAGE_NAME=infosecadventures.allsafe
-                        python report_generator.py ${ws}\\validation_output\\validation_results.json
+                        python -u report_generator.py ${ws}\\validation_output\\validation_results.json
                     """
                 }
                 echo 'HTML report generated!'
