@@ -122,9 +122,9 @@ pipeline {
             steps {
                 echo 'Running ADB Monkey...'
                 bat '''
-                    timeout /t 10 /nobreak
+                    ping 127.0.0.1 -n 11 > nul
                     adb shell am start -n infosecadventures.allsafe/.MainActivity
-                    timeout /t 5 /nobreak
+                    ping 127.0.0.1 -n 6 > nul
                     adb shell monkey -p infosecadventures.allsafe ^
                         --throttle 300 ^
                         --ignore-crashes ^
@@ -140,6 +140,7 @@ pipeline {
         // AI Validate runs HERE while DAST session is still ACTIVE
         // Tools (logcat, pcap, frida) need a live session to work
         stage('8. AI Validate Findings') {
+            options { timeout(time: 20, unit: 'MINUTES') }
             steps {
                 echo 'Running AI validation with Groq (DAST session active)...'
                 script {
