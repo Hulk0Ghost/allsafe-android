@@ -599,67 +599,80 @@ if __name__ == '__main__':
     for i, finding in enumerate(findings):
         print(f'\n[{i+1}/{total}] [{finding["severity"]}] {finding["title"][:55]}')
 
-        # ── Auto-verdict check ──────────────────────────────────────
-        # Findings that are pure SAST facts need no tools, no Groq call.
-        # Examples: minSdkVersion, binary hardening, manifest flags.
-        from claude_agent import auto_verdict
-        av = auto_verdict(finding)
-        if av:
-            print(f'  [AUTO] {av["verdict"]} ({av["confidence"]}) — skipping DAST')
+        try:
+            # ── Auto-verdict check ──────────────────────────────────────
+            from claude_agent import auto_verdict
+            av = auto_verdict(finding)
+            if av:
+                print(f'  [AUTO] {av["verdict"]} ({av["confidence"]}) -- skipping DAST')
 
-            # ── Manifest screenshot evidence ─────────────────────────
-            # For any manifest-sourced finding, capture the relevant
-            # AndroidManifest.xml lines as a PNG evidence screenshot.
-            # This replaces "no evidence" with a real artefact in the report.
-            MANIFEST_HIGHLIGHT_KEYWORDS = {
-                'debuggable':             ['android:debuggable', 'debuggable'],
-                'allowbackup':            ['android:allowBackup', 'allowBackup'],
-                'cleartext':              ['cleartextTrafficPermitted',
-                                           'usesCleartextTraffic', 'cleartext'],
-                'vulnerable android':     ['android:minSdkVersion', 'minSdkVersion',
-                                           'uses-sdk'],
-                'dangerous permission':   ['uses-permission', 'android.permission'],
-                'user-installed certificate': ['network_security_config', 'trustAnchors',
-                                              'certificates src', 'user'],
-            }
-            title_lower = finding.get('title', '').lower()
-            desc_lower  = finding.get('description', '').lower()
-            text_lower  = title_lower + ' ' + desc_lower
+                # ── Manifest screenshot evidence (best-effort, never fatal) ─
+                MANIFEST_HIGHLIGHT_KEYWORDS = {
+                    'debuggable':             ['android:debuggable', 'debuggable'],
+                    'allowbackup':            ['android:allowBackup', 'allowBackup'],
+                    'cleartext':              ['cleartextTrafficPermitted',
+                                               'usesCleartextTraffic', 'cleartext'],
+                    'vulnerable android':     ['android:minSdkVersion', 'minSdkVersion',
+                                               'uses-sdk'],
+                    'dangerous permission':   ['uses-permission', 'android.permission'],
+                    'user-installed certificate': ['network_security_config', 'trustAnchors',
+                                                  'certificates src', 'user'],
+                }
+                title_lower = finding.get('title', '').lower()
+                desc_lower  = finding.get('description', '').lower()
+                text_lower  = title_lower + ' ' + desc_lower
 
-            screenshot_path = None
-            for trigger_kw, highlight_kws in MANIFEST_HIGHLIGHT_KEYWORDS.items():
-                if trigger_kw in text_lower:
-                    print(f'  [MANIFEST] Taking manifest screenshot for: {trigger_kw}')
-                    ss = mobsf.manifest_screenshot(
-                        finding_title    = finding['title'],
-                        highlight_keywords = highlight_kws,
-                        name             = f'manifest_{finding["id"].replace("/","_").replace(":","")}'
+                screenshot_path = None
+                try:
+                    for trigger_kw, highlight_kws in MANIFEST_HIGHLIGHT_KEYWORDS.items():
+                        if trigger_kw in text_lower:
+                            print(f'  [MANIFEST] Taking manifest screenshot for: {trigger_kw}')
+                            ss = mobsf.manifest_screenshot(
+                                finding_title      = finding['title'],
+                                highlight_keywords = highlight_kws,
+                                name               = f'manifest_{finding["id"].replace("/","_").replace(":","")}'
+                            )
+                            if ss.get('success'):
+                                screenshot_path = ss['path']
+                                print(f'  [MANIFEST] Screenshot saved: {screenshot_path}')
+                            else:
+                                print(f'  [MANIFEST] Screenshot skipped: {ss.get("error","unknown")}')
+                            break
+                except Exception as ss_err:
+                    print(f'  [MANIFEST] Screenshot error (non-fatal): {ss_err}')
+
+                if screenshot_path:
+                    av['screenshots']      = [screenshot_path]
+                    av['evidence_summary'] = (
+                        f'AndroidManifest.xml screenshot captured. '
+                        f'Highlighted: {finding["title"]}. '
+                        f'File: {os.path.basename(screenshot_path)}'
                     )
-                    if ss.get('success'):
-                        screenshot_path = ss['path']
-                        print(f'  [MANIFEST] Screenshot saved: {screenshot_path}')
-                        if ss.get('matched_lines'):
-                            print(f'  [MANIFEST] Matched: {ss["matched_lines"][:2]}')
-                    else:
-                        print(f'  [MANIFEST] Screenshot failed: {ss.get("error")}')
-                    break
 
-            # Attach screenshot to verdict
-            if screenshot_path:
-                av['screenshots']     = [screenshot_path]
-                av['evidence_summary'] = (
-                    f'AndroidManifest.xml screenshot captured. '
-                    f'Highlighted: {finding["title"]}. '
-                    f'File: {os.path.basename(screenshot_path)}'
-                )
+                all_results.append({'finding': finding, 'verdict': av})
+                continue
+            # ── End auto-verdict — proceed with full DAST + Groq ────────
 
-            all_results.append({'finding': finding, 'verdict': av})
-            continue
-        # ── End auto-verdict — proceed with full DAST + Groq ────────
+            snippet = get_source_snippet(finding)
+            result  = agent.validate_finding(finding, snippet)
+            all_results.append(result)
 
-        snippet = get_source_snippet(finding)
-        result  = agent.validate_finding(finding, snippet)
-        all_results.append(result)
+        except Exception as finding_err:
+            # Never let one finding crash the whole pipeline
+            print(f'  [ERROR] Finding failed (skipping): {finding_err}')
+            all_results.append({
+                'finding': finding,
+                'verdict': {
+                    'verdict':           'NEEDS_REVIEW',
+                    'confidence':        'LOW',
+                    'explanation':       f'Validation error: {finding_err}',
+                    'evidence_summary':  'Pipeline error during validation',
+                    'fix_recommendation': finding.get('description', ''),
+                    'risk_score':        5,
+                    'exploitability':    'Unknown — validation failed',
+                    'screenshots':       [],
+                }
+            })
 
         if i < total - 1:
             print('  [*] Cooling down before next finding...')

@@ -1193,7 +1193,26 @@ Respond with ONLY this JSON (raw, no markdown):
 
         if tool_name in dispatch:
             try:
-                return dispatch[tool_name]()
+                import threading
+                result_box = [None]
+                err_box    = [None]
+
+                def _run():
+                    try:
+                        result_box[0] = dispatch[tool_name]()
+                    except Exception as exc:
+                        err_box[0] = str(exc)
+
+                t = threading.Thread(target=_run, daemon=True)
+                t.start()
+                t.join(timeout=90)          # max 90s per tool call
+
+                if t.is_alive():
+                    print(f'  [TIMEOUT] {tool_name} exceeded 90s — skipping')
+                    return {'success': False, 'error': f'{tool_name} timed out after 90s'}
+                if err_box[0]:
+                    return {'success': False, 'error': err_box[0]}
+                return result_box[0]
             except Exception as e:
                 return {'success': False, 'error': str(e)}
         else:
@@ -1488,20 +1507,28 @@ Respond with ONLY this JSON (raw, no markdown):
 
             elif tool == 'test_exported_activities':
                 # ── Exported component — 3-source evidence strategy ──────
-                # Source 1: MobSF exported activity tester (automated launch)
+                def _safe(fn, label):
+                    """Run fn() with 60s timeout, return string result."""
+                    import threading
+                    box = [{}]
+                    def _r():
+                        try: box[0] = fn()
+                        except Exception as e: box[0] = {'error': str(e)}
+                    t = threading.Thread(target=_r, daemon=True)
+                    t.start(); t.join(60)
+                    if t.is_alive():
+                        print(f'  [TIMEOUT] {label} exceeded 60s')
+                        return f'{label} timed out'
+                    return str(box[0].get('data', box[0].get('error', '')))
+
                 print('  [EVIDENCE] Step 1/3: MobSF test_exported_activities...')
-                r1 = self.tools.test_exported_activities()
-                exported_data = str(r1.get('data', r1.get('error', '')))
+                exported_data = _safe(self.tools.test_exported_activities, 'test_exported_activities')
 
-                # Source 2: MobSF run_activity_tester (ALL activities, finds hidden)
                 print('  [EVIDENCE] Step 2/3: MobSF run_activity_tester (all activities)...')
-                r2 = self.tools.run_activity_tester()
-                all_act_data = str(r2.get('data', r2.get('error', '')))
+                all_act_data = _safe(self.tools.run_activity_tester, 'run_activity_tester')
 
-                # Source 3: logcat after ADB launches (captured from nav actions above)
                 print('  [EVIDENCE] Step 3/3: Logcat post-launch...')
-                r3 = self.tools.get_logcat()
-                logcat_data = str(r3.get('data', r3.get('error', '')))
+                logcat_data = _safe(self.tools.get_logcat, 'get_logcat')
 
                 # Combine all 3 sources into one evidence string for pattern matching
                 combined = '\n'.join([
