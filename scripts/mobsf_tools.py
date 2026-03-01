@@ -487,8 +487,52 @@ class MobSFTools:
     # TOOL LIST FOR AI
     # ─────────────────────────────────────────
 
+    def navigate_to_finding(self, nav_entry):
+        """
+        Navigate to a specific app screen and trigger the vulnerability.
+        Called BEFORE any Frida/logcat tools so evidence is captured
+        while the relevant code path is actually executing.
+
+        nav_entry comes from ALLSAFE_NAV_MAP in claude_agent.py.
+        Steps are executed in order: launch activity, wait, tap, input, adb command.
+        """
+        activity = nav_entry.get('activity', '')
+        actions  = nav_entry.get('actions', [])
+        trigger  = nav_entry.get('what_triggers', '')
+
+        print(f'  [NAV] Navigating to: {activity.split(".")[-1]}')
+        print(f'  [NAV] Will trigger: {trigger[:80]}')
+
+        # Step 1: launch the specific challenge activity
+        if activity:
+            result = self.start_activity(activity)
+            if not result.get('success'):
+                print(f'  [WARN] start_activity failed: {result.get("error")}')
+                # Fallback: launch app and let monkey navigate
+                self.launch_app()
+            time.sleep(2)
+
+        # Step 2: execute interaction steps
+        for action in actions:
+            atype = action.get('type')
+            if atype == 'tap':
+                self.adb_tap(action['x'], action['y'])
+            elif atype == 'input':
+                self.adb_input_text(action['text'])
+            elif atype == 'key':
+                self.adb_press_key(action['keycode'])
+            elif atype == 'wait':
+                time.sleep(action.get('seconds', 2))
+            elif atype == 'adb':
+                result = self.adb_command(action['cmd'])
+                print(f'  [NAV] ADB: {action["cmd"][:60]} → {str(result)[:100]}')
+
+        print(f'  [NAV] Navigation complete — vulnerability path triggered')
+        return {'success': True, 'activity': activity, 'steps_executed': len(actions)}
+
     def get_tool_list(self):
         return {
+            'navigate_to_finding':      'Navigate to a specific AllSafe challenge screen and trigger the vulnerability (use finding title as key)',
             'launch_app':               'Launch app from home screen via ADB',
             'stop_app':                 'Force stop the app',
             'start_activity':           'Launch a specific activity by full class name',

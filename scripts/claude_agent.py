@@ -360,6 +360,493 @@ def auto_verdict(finding):
     return None  # needs full Groq + DAST pipeline
 
 
+# -----------------------------------------
+# APP NAVIGATION MAP
+# Maps finding keywords → activity to launch
+# + interactions to trigger the vulnerability
+#
+# Structure per entry:
+#   activity  : full class name to start_activity
+#   actions   : list of {type, ...} steps to execute
+#     type=tap      : tap x,y coordinates
+#     type=input    : type text into focused field
+#     type=key      : press keycode
+#     type=wait     : sleep N seconds
+#     type=adb      : run adb shell command
+#
+# Coordinates are for a 1080x2340 screen (AllSafe on emulator).
+# The AI gets this map injected into its test plan so it knows
+# exactly how to navigate before calling Frida/logcat tools.
+# -----------------------------------------
+
+ALLSAFE_NAV_MAP = {
+
+    # ══════════════════════════════════════════════════════════════════
+    # STRUCTURE PER ENTRY:
+    #   activity      : full class name to launch via start_activity
+    #   actions       : ordered steps — tap/input/key/wait/adb
+    #   evidence_tool : SINGLE tool to call after navigation
+    #   evidence_cmd  : for adb type — the exact shell command
+    #   confirm_if    : list of strings — ANY present in evidence = CONFIRMED
+    #   deny_if       : list of strings — ANY present in evidence = FALSE_POSITIVE
+    #   what_triggers : human description of what the interaction does
+    #
+    # Coordinates calibrated for 1080x2340 emulator (AllSafe screenshots)
+    # ══════════════════════════════════════════════════════════════════
+
+    # ── [1] Insecure Logging ──────────────────────────────────────────
+    # Screen: text input "Enter your secret here..." + submit
+    # Evidence: logcat — the typed secret appears in debug log output
+    'insecure logging': {
+        'activity':     'infosecadventures.allsafe.challenges.InsecureLogging',
+        'actions': [
+            {'type': 'wait',  'seconds': 2},
+            {'type': 'tap',   'x': 540, 'y': 1195},  # tap input field
+            {'type': 'input', 'text': 'ALLSAFE_TEST_SECRET_XK92'},
+            {'type': 'tap',   'x': 540, 'y': 1380},  # tap submit / anywhere to trigger log
+            {'type': 'wait',  'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'ALLSAFE_TEST_SECRET_XK92',  # exact string we typed appears in logcat
+            'Log.d', 'Log.e', 'Log.v',   # logging calls visible
+            'secret', 'input',
+        ],
+        'deny_if': [],
+        'what_triggers': 'Type known string into input — if insecure, it appears verbatim in logcat',
+    },
+
+    # ── [2] Hardcoded Credentials ─────────────────────────────────────
+    # Screen: single [INITIATE LOGIN REQUEST] button
+    # Evidence: logcat — hardcoded username/password used in the request
+    'hardcoded credential': {
+        'activity':     'infosecadventures.allsafe.challenges.HardcodedCredentials',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1097},   # [INITIATE LOGIN REQUEST] button
+            {'type': 'wait', 'seconds': 3},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'username', 'password', 'credential',
+            'login', 'basic', 'Authorization',
+            'aHR0cHM',                               # base64 often used to hide creds
+        ],
+        'deny_if': [
+            'SecurityException', 'no credentials',
+        ],
+        'what_triggers': 'Button fires login request using hardcoded credentials — logcat captures the attempt',
+    },
+
+    # ── [3] Firebase Database ─────────────────────────────────────────
+    # Screen: [QUERY DATABASE] button
+    # Evidence: HTTP logs — unauthenticated 200 response from firebaseio.com
+    'firebase': {
+        'activity':     'infosecadventures.allsafe.challenges.FirebaseDatabase',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1052},   # [QUERY DATABASE] button
+            {'type': 'wait', 'seconds': 5},           # wait for Firebase HTTP round-trip
+        ],
+        'evidence_tool': 'get_http_logs',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'firebaseio.com',                         # Firebase REST endpoint hit
+            '"200"', '200',                           # successful unauthenticated read
+            '.json',                                  # Firebase REST format
+        ],
+        'deny_if': [
+            '"401"', '"403"',                         # auth enforced = not vulnerable
+            'Permission denied',
+        ],
+        'what_triggers': 'Tapping QUERY DATABASE fires unauthenticated Firebase REST call captured by proxy',
+    },
+
+    # ── [4] Insecure Shared Preferences ──────────────────────────────
+    # Screen: Username / Password / Confirm Password fields + [STORE CREDENTIALS]
+    # Evidence: ADB reads SharedPrefs XML — password stored in plaintext
+    'shared pref': {
+        'activity':     'infosecadventures.allsafe.challenges.InsecureSharedPreferences',
+        'actions': [
+            {'type': 'wait',  'seconds': 2},
+            {'type': 'tap',   'x': 540, 'y': 800},   # tap Username field
+            {'type': 'input', 'text': 'testuser'},
+            {'type': 'tap',   'x': 540, 'y': 1005},  # tap Password field
+            {'type': 'input', 'text': 'PLAINTEXT_PWD_TEST99'},
+            {'type': 'tap',   'x': 540, 'y': 1190},  # tap Confirm Password field
+            {'type': 'input', 'text': 'PLAINTEXT_PWD_TEST99'},
+            {'type': 'tap',   'x': 540, 'y': 1355},  # [STORE CREDENTIALS] button
+            {'type': 'wait',  'seconds': 2},
+        ],
+        'evidence_tool': 'adb_command',
+        'evidence_cmd':  'cat /data/data/infosecadventures.allsafe/shared_prefs/*.xml',
+        'confirm_if': [
+            'PLAINTEXT_PWD_TEST99',                   # our known password in plain XML
+            'testuser',
+            '<string name=',                          # XML SharedPrefs structure
+        ],
+        'deny_if': [
+            'No such file',                           # prefs not created = not stored
+            'Permission denied',
+        ],
+        'what_triggers': 'Fill form and store — ADB reads XML file directly to confirm plaintext password storage',
+    },
+
+    # ── [5] SQL Injection ────────────────────────────────────────────
+    # Screen: Username + Password fields + [LOGIN] button
+    # Evidence: logcat — SQLi success message or multiple rows returned
+    'sql injection': {
+        'activity':     'infosecadventures.allsafe.challenges.SqlInjection',
+        'actions': [
+            {'type': 'wait',  'seconds': 2},
+            {'type': 'tap',   'x': 540, 'y': 1195},  # tap Username field
+            {'type': 'input', 'text': "' OR '1'='1"},
+            {'type': 'tap',   'x': 540, 'y': 1380},  # tap Password field
+            {'type': 'input', 'text': 'anything'},
+            {'type': 'tap',   'x': 540, 'y': 1523},  # [LOGIN] button
+            {'type': 'wait',  'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'success', 'Welcome', 'logged in',        # login bypassed
+            'OR 1=1', "OR '1'='1",                    # payload echoed in log
+            'rawQuery', 'execSQL',                    # SQL execution logged
+        ],
+        'deny_if': [
+            'invalid', 'failed', 'incorrect',         # login rejected = not vulnerable
+            'PreparedStatement',                      # parameterised = not vulnerable
+        ],
+        'what_triggers': "Classic SQLi payload in username field — if vulnerable, login succeeds or data leaked",
+    },
+
+    # ── [6] PIN Bypass ───────────────────────────────────────────────
+    # Screen: 4-digit PIN field + [VALIDATE] button
+    # Evidence: logcat — Frida hook overrides PIN check return value
+    'pin bypass': {
+        'activity':     'infosecadventures.allsafe.challenges.PinBypass',
+        'actions': [
+            {'type': 'wait',  'seconds': 2},
+            {'type': 'tap',   'x': 540, 'y': 1220},  # tap PIN field
+            {'type': 'input', 'text': '0000'},        # wrong PIN on purpose
+            {'type': 'tap',   'x': 540, 'y': 1385},  # [VALIDATE] button
+            {'type': 'wait',  'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'checkPin', 'validatePin', 'verifyPin',   # PIN method called
+            'return', 'bypass',
+            'PIN', 'pin',
+        ],
+        'deny_if': [
+            'incorrect PIN', 'wrong pin',             # not bypassable
+        ],
+        'what_triggers': 'Enter wrong PIN — logcat shows PIN validation method called, Frida can then override return value',
+    },
+
+    # ── [7] Root Detection ───────────────────────────────────────────
+    # Evidence: logcat — root check methods called, Frida root_bypass logs each one
+    'root detection': {
+        'activity':     'infosecadventures.allsafe.challenges.RootDetection',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1200},   # trigger root check
+            {'type': 'wait', 'seconds': 3},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'isRooted', 'checkRoot', 'su', '/system/xbin/su',
+            'RootBeer', 'RootDetection',
+            'Superuser', 'BusyBox',
+        ],
+        'deny_if': [
+            'not rooted', 'root not found',
+        ],
+        'what_triggers': 'Trigger root check — logcat reveals which root detection methods are called',
+    },
+
+    # ── [8] Secure Flag Bypass ───────────────────────────────────────
+    # Evidence: screenshot — if FLAG_SECURE is bypassable, screenshot is NOT black
+    'secure flag': {
+        'activity':     'infosecadventures.allsafe.challenges.SecureFlag',
+        'actions': [
+            {'type': 'wait', 'seconds': 3},           # let screen fully render
+        ],
+        'evidence_tool': 'take_screenshot',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'screenshot_saved',                       # screenshot captured = FLAG_SECURE absent/bypassed
+        ],
+        'deny_if': [],
+        # Note: AI must check if screenshot is entirely black (FLAG_SECURE active) or shows content
+        'what_triggers': 'Take screenshot — if FLAG_SECURE blocks it, image is black; if bypassable, content visible',
+    },
+
+    # ── [9] Deep Link Exploitation ───────────────────────────────────
+    # Evidence: logcat — DeepLinkTask activity launched via URI without validation
+    'deep link': {
+        'activity':     'infosecadventures.allsafe.challenges.DeepLinkTask',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'adb',  'cmd': 'am start -a android.intent.action.VIEW -d "allsafe://infosecadventures/congrats"'},
+            {'type': 'wait', 'seconds': 3},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'DeepLinkTask',                           # activity launched
+            'allsafe://',                             # URI handled
+            'congrats', 'Congrats',
+            'onNewIntent', 'handleDeepLink',
+        ],
+        'deny_if': [
+            'ActivityNotFoundException',
+            'Permission denied', 'No Activity found',
+        ],
+        'what_triggers': 'Fire allsafe:// URI via ADB — if handled without validation, DeepLinkTask launches and logcat confirms',
+    },
+
+    # ── [10] Insecure Broadcast Receiver ─────────────────────────────
+    # Evidence: logcat — broadcast received without permission check
+    'broadcast': {
+        'activity':     'infosecadventures.allsafe.challenges.InsecureBroadcastReceiver',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'adb',  'cmd': 'am broadcast -a infosecadventures.allsafe.INSECURE_BROADCAST'},
+            {'type': 'wait', 'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'BroadcastReceiver', 'onReceive',         # receiver fired
+            'INSECURE_BROADCAST',
+            'Broadcast', 'received',
+        ],
+        'deny_if': [
+            'SecurityException', 'Permission Denial',
+            'not exported',
+        ],
+        'what_triggers': 'Send broadcast from ADB with no permissions — unprotected receiver fires and logcat confirms',
+    },
+
+    # ── [11] Vulnerable WebView ───────────────────────────────────────
+    # Evidence: logcat — JS interface registered, file access enabled
+    'webview': {
+        'activity':     'infosecadventures.allsafe.challenges.VulnerableWebView',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1200},
+            {'type': 'wait', 'seconds': 3},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'addJavascriptInterface',                 # JS bridge exposed
+            'setJavaScriptEnabled',                   # JS enabled
+            'setAllowFileAccess',                     # file access enabled
+            'WebView', 'onPageFinished',
+        ],
+        'deny_if': [
+            'WebViewClient blocked',
+        ],
+        'what_triggers': 'Load WebView — logcat shows whether JavaScript interface and file access are enabled',
+    },
+
+    # ── [12] Certificate Pinning ──────────────────────────────────────
+    # Evidence: run_tls_tests — definitive pass/fail for pinning
+    'certificate pinning': {
+        'activity':     'infosecadventures.allsafe.challenges.CertificatePinning',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1400},   # trigger network call
+            {'type': 'wait', 'seconds': 4},
+        ],
+        'evidence_tool': 'run_tls_tests',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'pinning_bypass', 'bypass_success',
+            'no_pinning', '"pinning": false', '"pinning":false',
+        ],
+        'deny_if': [
+            'pinning_enforced', 'bypass_failed',
+            '"pinning": true', '"pinning":true',
+        ],
+        'what_triggers': 'Run TLS security test suite — confirms if certificate pinning is implemented and enforced',
+    },
+
+    # ── [13] Weak Cryptography ────────────────────────────────────────
+    # Evidence: logcat — algorithm name logged when Cipher.getInstance() called
+    'weak crypto': {
+        'activity':     'infosecadventures.allsafe.challenges.WeakCryptography',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1200},
+            {'type': 'wait', 'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'AES/ECB',                                # ECB mode = confirmed weak
+            'DES', '3DES', 'RC4', 'MD5', 'SHA1',
+            'ECB', 'NoPadding',
+            'Cipher.getInstance', 'SecretKeySpec',
+        ],
+        'deny_if': [
+            'AES/GCM', 'AES/CBC',                    # strong mode = not vulnerable
+            'ECDH', 'RSA/OAEP',
+        ],
+        'what_triggers': 'Trigger crypto operation — logcat reveals algorithm name (AES/ECB confirms weak crypto)',
+    },
+
+    # ── [14] Insecure Service ─────────────────────────────────────────
+    # Evidence: logcat — service started by external ADB command without SecurityException
+    'insecure service': {
+        'activity':     'infosecadventures.allsafe.challenges.InsecureService',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'adb',  'cmd': 'am startservice -n infosecadventures.allsafe/.challenges.InsecureService'},
+            {'type': 'wait', 'seconds': 3},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'InsecureService',                        # service started
+            'onStartCommand', 'onCreate',
+            'Service started',
+        ],
+        'deny_if': [
+            'SecurityException', 'Permission Denial',
+            'not exported',
+        ],
+        'what_triggers': 'Start service from ADB — if no permission check, it starts and logcat confirms',
+    },
+
+    # ── [15] Insecure Content Providers ──────────────────────────────
+    # Evidence: adb_command — content query returns rows without permission check
+    'provider': {
+        'activity':     'infosecadventures.allsafe.challenges.InsecureProviders',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+        ],
+        'evidence_tool': 'adb_command',
+        'evidence_cmd':  'content query --uri content://infosecadventures.allsafe.provider/',
+        'confirm_if': [
+            'Row:',                                   # data rows returned = no auth
+            'result=', 'name=', 'id=',
+        ],
+        'deny_if': [
+            'Permission Denial',                      # permission enforced = not vulnerable
+            'Unknown URI', 'No content provider',
+        ],
+        'what_triggers': 'Query content provider directly via ADB — if exported without readPermission, rows are returned',
+    },
+
+    # ── [16] Object Serialization ─────────────────────────────────────
+    # Evidence: logcat — ObjectInputStream usage visible at runtime
+    'serialization': {
+        'activity':     'infosecadventures.allsafe.challenges.ObjectSerialization',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1200},
+            {'type': 'wait', 'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'ObjectInputStream', 'Serializable',
+            'readObject', 'ObjectOutputStream',
+            'serialVersionUID',
+        ],
+        'deny_if': [
+            'Parcelable',                             # Parcelable is safe alternative
+        ],
+        'what_triggers': 'Trigger serialization operation — logcat reveals ObjectInputStream usage confirming unsafe deserialization',
+    },
+
+    # ── [17] Arbitrary Code Execution ────────────────────────────────
+    # Evidence: logcat — dynamic code loading or Runtime.exec() at runtime
+    'arbitrary code': {
+        'activity':     'infosecadventures.allsafe.challenges.ArbitraryCodeExecution',
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            {'type': 'tap',  'x': 540, 'y': 1200},
+            {'type': 'wait', 'seconds': 2},
+        ],
+        'evidence_tool': 'get_logcat',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            'Runtime.exec', 'DexClassLoader',
+            'PathClassLoader', 'exec(',
+            'loadDex', 'loadClass',
+            'ProcessBuilder',
+        ],
+        'deny_if': [
+            'SecurityException', 'ClassNotFoundException',
+        ],
+        'what_triggers': 'Trigger code execution path — logcat shows Runtime.exec() or dynamic class loading confirming ACE',
+    },
+}
+
+
+def get_nav_steps(finding):
+    """
+    Look up navigation steps for a finding.
+    Returns nav entry dict or None if no specific navigation needed.
+    Checks finding title + description against NAV_MAP keys.
+    """
+    title = finding.get('title', '').lower()
+    desc  = finding.get('description', '').lower()
+    text  = title + ' ' + desc
+
+    for keyword, nav in ALLSAFE_NAV_MAP.items():
+        if keyword in text:
+            return nav
+    return None
+
+
+def evaluate_nav_evidence(nav, evidence_output):
+    """
+    Given a nav entry and the raw evidence string from the tool,
+    check confirm_if and deny_if patterns.
+
+    Returns:
+        'CONFIRMED'      — at least one confirm_if pattern found
+        'FALSE_POSITIVE' — at least one deny_if pattern found (and no confirms)
+        'NEEDS_REVIEW'   — no patterns matched either way
+        None             — nav has no patterns defined
+    """
+    if not nav:
+        return None
+
+    confirm_patterns = nav.get('confirm_if', [])
+    deny_patterns    = nav.get('deny_if', [])
+
+    if not confirm_patterns and not deny_patterns:
+        return None
+
+    evidence_lower = evidence_output.lower()
+
+    # Check deny_if first — if clearly not vulnerable, stop
+    for pattern in deny_patterns:
+        if pattern.lower() in evidence_lower:
+            return 'FALSE_POSITIVE'
+
+    # Check confirm_if
+    for pattern in confirm_patterns:
+        if pattern.lower() in evidence_lower:
+            return 'CONFIRMED'
+
+    return 'NEEDS_REVIEW'
+
+
+# -----------------------------------------
+# AI AGENT CLASS
+# -----------------------------------------
+
 class ClaudeAgent:
 
     def __init__(self, api_key, mobsf_tools, package_name):
@@ -555,6 +1042,11 @@ Respond with ONLY this JSON (raw, no markdown):
             'stop_app':                 lambda: self.tools.stop_app(params.get('package', self.package)),
             'start_activity':           lambda: self.tools.start_activity(params.get('activity', '')),
             'adb_command':              lambda: self.tools.adb_command(params.get('cmd', '')),
+            'navigate_to_finding':      lambda: self.tools.navigate_to_finding(
+                                            get_nav_steps({'title': params.get('finding_title', ''),
+                                                          'description': params.get('finding_title', '')})
+                                            or {}
+                                        ),
             # UI
             'adb_input_text':           lambda: self.tools.adb_input_text(params.get('text', '')),
             'adb_tap':                  lambda: self.tools.adb_tap(params.get('x', 500), params.get('y', 500)),
@@ -837,22 +1329,100 @@ Respond with ONLY this JSON (raw, no markdown):
         print(f'  Source: {finding.get("source", "unknown")} | CWE: {finding.get("cwe", "N/A")}')
         print(f'{"="*55}')
 
-        # Cap max steps to 4 to prevent runaway tool chains
-        # (TLS test = 75s, Frida = 5s wait, activity tester = 120s)
-        # 4 steps max = ~5 minutes per finding worst case
         MAX_STEPS = 4
 
+        # ── Step 1: Navigate to challenge screen ──────────────────────
+        nav = get_nav_steps(finding)
+        if nav:
+            print(f'  [NAV] Navigating → {nav["activity"].split(".")[-1]}')
+            self.tools.navigate_to_finding(nav)
+            import time as _t; _t.sleep(2)
+        else:
+            self.tools.launch_app()
+            import time as _t; _t.sleep(2)
+
+        # ── Step 2: Collect targeted evidence using nav evidence_tool ─
+        nav_verdict   = None
+        nav_evidence  = ''
+
+        if nav and nav.get('evidence_tool'):
+            tool  = nav['evidence_tool']
+            cmd   = nav.get('evidence_cmd')
+            print(f'  [EVIDENCE] Collecting via: {tool}')
+
+            if tool == 'get_logcat':
+                result = self.tools.get_logcat()
+            elif tool == 'get_http_logs':
+                result = self.tools.get_http_logs()
+            elif tool == 'run_tls_tests':
+                result = self.tools.run_tls_tests()
+            elif tool == 'take_screenshot':
+                result = self.tools.take_screenshot(
+                    f'{finding["id"].replace("/","_")}_nav_evidence')
+            elif tool == 'adb_command' and cmd:
+                result = self.tools.adb_command(cmd)
+            else:
+                result = {'success': False, 'error': f'Unknown evidence tool: {tool}'}
+
+            if result.get('success'):
+                # Flatten evidence to string for pattern matching
+                data = result.get('data', result.get('output', result.get('path', '')))
+                nav_evidence = str(data) if data else ''
+
+                # Pattern match against confirm_if / deny_if
+                nav_verdict = evaluate_nav_evidence(nav, nav_evidence)
+                print(f'  [MATCH]  Pattern match → {nav_verdict}')
+
+                # Short-circuit: deterministic result, skip Groq entirely
+                if nav_verdict in ('CONFIRMED', 'FALSE_POSITIVE'):
+                    print(f'  [FAST]   Deterministic verdict — skipping Groq API call')
+                    confirm_patterns = [p for p in nav.get('confirm_if', [])
+                                        if p.lower() in nav_evidence.lower()]
+                    deny_patterns    = [p for p in nav.get('deny_if', [])
+                                        if p.lower() in nav_evidence.lower()]
+                    matched = confirm_patterns or deny_patterns
+
+                    verdict = {
+                        'verdict':           nav_verdict,
+                        'confidence':        'HIGH',
+                        'explanation':       (
+                            f'Pattern match on {tool} output. '
+                            f'Matched strings: {matched}. '
+                            f'{nav["what_triggers"]}'
+                        ),
+                        'evidence_summary':  f'{tool} output matched: {matched}',
+                        'fix_recommendation': finding.get('description', ''),
+                        'risk_score':        7 if finding['severity'] == 'HIGH' else
+                                             9 if finding['severity'] == 'CRITICAL' else 4,
+                        'exploitability':    f'Confirmed at runtime via {tool}.',
+                        'screenshots':       [],
+                        'nav_matched':       True,
+                    }
+                    print(f'\n  [RESULT] {verdict["verdict"]} ({verdict["confidence"]}) | '
+                          f'Risk: {verdict["risk_score"]}/10')
+                    return {'finding': finding, 'test_plan': {}, 'execution': [], 'verdict': verdict}
+            else:
+                print(f'  [WARN]   Evidence tool failed: {result.get("error")}')
+        # ── End evidence collection ───────────────────────────────────
+
+        # ── Step 3: Groq + full test plan (ambiguous / no nav match) ──
         test_plan = self.get_test_plan(finding, source_code_snippet)
 
-        # Enforce step cap
         if 'test_plan' in test_plan and len(test_plan['test_plan']) > MAX_STEPS:
-            print(f'  [INFO] Capping test plan from {len(test_plan["test_plan"])} to {MAX_STEPS} steps')
+            print(f'  [INFO] Capping test plan: {len(test_plan["test_plan"])} → {MAX_STEPS} steps')
             test_plan['test_plan'] = test_plan['test_plan'][:MAX_STEPS]
+
+        # Inject nav evidence into prompt so Groq has the data even if no pattern matched
+        if nav_evidence:
+            test_plan['_nav_evidence']      = nav_evidence[:1000]
+            test_plan['_nav_evidence_tool'] = nav.get('evidence_tool', '')
+            test_plan['_nav_verdict_hint']  = nav_verdict or 'no_pattern_match'
 
         execution_results = self.execute_test_plan(test_plan, finding['id'])
         verdict           = self.get_verdict(finding, test_plan, execution_results)
 
-        print(f'\n  [RESULT] {verdict["verdict"]} (Confidence: {verdict["confidence"]}) | Risk: {verdict.get("risk_score", "?")}/10')
+        print(f'\n  [RESULT] {verdict["verdict"]} (Confidence: {verdict["confidence"]}) | '
+              f'Risk: {verdict.get("risk_score", "?")}/10')
         print(f'  {verdict["explanation"][:100]}')
 
         return {
