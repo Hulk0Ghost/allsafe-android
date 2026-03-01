@@ -360,7 +360,7 @@ def auto_verdict(finding):
     return None  # needs full Groq + DAST pipeline
 
 
-
+class ClaudeAgent:
 
     def __init__(self, api_key, mobsf_tools, package_name):
         self.api_key  = api_key
