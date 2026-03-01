@@ -111,7 +111,7 @@ FRIDA_SCRIPT_MAP = {
     'xss':               'audit-webview',
 
     # ── Platform / IPC ────────────────────────────────────────────────
-    'exported':          'dump-intent',                # Trace intents to exported components
+    # 'exported' removed — uses test_exported_activities() via NAV_MAP, not Frida
     'activity':          'trace-intent',               # Trace Activity launch intents
     'service':           'trace-intent',
     'receiver':          'trace-intent',
@@ -160,7 +160,7 @@ SOURCE_CONTEXT = {
         'Focus on: exported components without permissions, debug=true, backup=true, '
         'cleartext traffic, task hijacking via launchMode. '
         'Manifest findings are CONFIGURATION FACTS — confirm from the manifest text, no Frida needed. '
-        'Relevant scripts if DAST confirmation wanted: dump-intent (exported components), '
+        'Relevant scripts if DAST confirmation wanted: '
         'ui-deeplink-trace (deep links), trace-intent (activity/service/receiver launch).'
     ),
     'code_analysis': (
@@ -325,6 +325,49 @@ AUTO_VERDICT_PATTERNS = [
             'TLS tests (run separately) confirm the app actually makes HTTP connections.'
         ),
         'fix': 'Set android:usesCleartextTraffic="false" and configure network_security_config.xml.',
+    },
+
+    # NOTE: EXPORTED COMPONENT is intentionally NOT auto-verdicted.
+    # It must go through DAST: test_exported_activities() + run_activity_tester()
+    # + ADB am start to confirm each exported activity/service is actually
+    # launchable without SecurityException — manifest alone is insufficient.
+
+    # ── Dangerous permissions ─────────────────────────────────────────
+    {
+        'keywords': ['dangerous permission', 'uses-permission', 'read_contacts',
+                     'access_fine_location', 'read_sms', 'read_call_log',
+                     'record_audio', 'camera', 'write_external_storage',
+                     'read_external_storage', 'get_accounts', 'use_biometric',
+                     'use_fingerprint'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'MEDIUM',
+        'explanation': (
+            'The app declares a dangerous permission in AndroidManifest.xml. '
+            'The permission declaration itself is a static manifest fact — DAST cannot '
+            'add or remove a declared permission. Whether the permission is actually '
+            'used for a malicious purpose requires code review.'
+        ),
+        'fix': 'Remove the permission if not required. If needed, document the business justification.',
+    },
+
+    # ── User-trusted certificates / network security config ───────────
+    {
+        'keywords': ['user-installed certificate', 'acceptsuserscertificates',
+                     'custom network security config', 'network security config',
+                     'networksecurityconfig', 'user certificate trusted',
+                     'user ca cert'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'The network security config trusts user-installed CA certificates or uses '
+            'a custom security config. This is a static configuration fact in '
+            'network_security_config.xml confirmed by SAST. '
+            'It allows MITM attacks with a user-installed proxy certificate.'
+        ),
+        'fix': (
+            'Remove <trust-anchors> for user certificates. '
+            'Only trust system CAs or implement certificate pinning.'
+        ),
     },
 ]
 
@@ -789,6 +832,74 @@ ALLSAFE_NAV_MAP = {
         ],
         'what_triggers': 'Trigger code execution path — logcat shows Runtime.exec() or dynamic class loading confirming ACE',
     },
+
+    # ── [18] Exported Components ──────────────────────────────────────
+    # Strategy:
+    #   Step 1 — MobSF test_exported_activities() launches all exported
+    #            activities via the MobSF DAST engine and takes screenshots.
+    #   Step 2 — run_activity_tester() tries ALL activities (including
+    #            non-exported ones) to find hidden attack surface.
+    #   Step 3 — ADB manually starts each known AllSafe exported component
+    #            directly from shell (simulates a rogue app).
+    #   Evidence: logcat — if launched without SecurityException = CONFIRMED
+    #
+    # AllSafe exported components known from manifest:
+    #   - infosecadventures.allsafe.ProxyActivity   (proxy/deep-link handler)
+    #   - infosecadventures.allsafe.challenges.DeepLinkTask (allsafe:// scheme)
+    # Both have android:exported=true and no android:permission attribute.
+    'exported component': {
+        'activity':     'infosecadventures.allsafe.MainActivity',  # start from home
+        'actions': [
+            {'type': 'wait', 'seconds': 2},
+            # Step 1: ADB direct launch of ProxyActivity — no permission needed
+            {'type': 'adb',  'cmd': (
+                'am start -n infosecadventures.allsafe/.ProxyActivity '
+                '--activity-clear-task'
+            )},
+            {'type': 'wait', 'seconds': 3},
+            # Step 2: ADB direct launch of DeepLinkTask with a crafted URI
+            {'type': 'adb',  'cmd': (
+                'am start -a android.intent.action.VIEW '
+                '-d "allsafe://infosecadventures/congrats" '
+                '-n infosecadventures.allsafe/.challenges.DeepLinkTask'
+            )},
+            {'type': 'wait', 'seconds': 3},
+            # Step 3: Try starting an exported service if present
+            {'type': 'adb',  'cmd': (
+                'am startservice -n infosecadventures.allsafe/.challenges.InsecureService'
+            )},
+            {'type': 'wait', 'seconds': 2},
+        ],
+        # Primary evidence: MobSF exported activity tester (automated)
+        # This calls /api/v1/android/activity with type=exported
+        # Returns list of activities it launched + screenshots
+        'evidence_tool': 'test_exported_activities',
+        'evidence_cmd':  None,
+        'confirm_if': [
+            # MobSF tester returns activity names it successfully launched
+            'ProxyActivity',
+            'DeepLinkTask',
+            'InsecureService',
+            # ADB logcat shows successful launch
+            'onCreate', 'onStart', 'onResume',
+            # MobSF result keys
+            'activities', 'exported',
+            # Generic activity launch success
+            'Starting: Intent',
+        ],
+        'deny_if': [
+            # Any of these = permission enforced = not exploitable
+            'SecurityException',
+            'Permission Denial',
+            'not exported',
+            'requires android.permission',
+        ],
+        'what_triggers': (
+            'ADB directly launches exported activities/services without any permission — '
+            'simulates a rogue app exploiting the exported component. '
+            'MobSF test_exported_activities() also runs all exported components automatically.'
+        ),
+    },
 }
 
 
@@ -801,6 +912,19 @@ def get_nav_steps(finding):
     title = finding.get('title', '').lower()
     desc  = finding.get('description', '').lower()
     text  = title + ' ' + desc
+
+    # Extended keyword aliases for finding titles that don't match the NAV_MAP key exactly
+    ALIASES = {
+        'exported activity':  'exported component',
+        'exported service':   'exported component',
+        'exported receiver':  'exported component',
+        'exported provider':  'exported component',
+        'android:exported':   'exported component',
+        'cwe-926':            'exported component',
+    }
+    for alias, canonical in ALIASES.items():
+        if alias in text and canonical in ALLSAFE_NAV_MAP:
+            return ALLSAFE_NAV_MAP[canonical]
 
     for keyword, nav in ALLSAFE_NAV_MAP.items():
         if keyword in text:
@@ -1361,6 +1485,35 @@ Respond with ONLY this JSON (raw, no markdown):
                     f'{finding["id"].replace("/","_")}_nav_evidence')
             elif tool == 'adb_command' and cmd:
                 result = self.tools.adb_command(cmd)
+
+            elif tool == 'test_exported_activities':
+                # ── Exported component — 3-source evidence strategy ──────
+                # Source 1: MobSF exported activity tester (automated launch)
+                print('  [EVIDENCE] Step 1/3: MobSF test_exported_activities...')
+                r1 = self.tools.test_exported_activities()
+                exported_data = str(r1.get('data', r1.get('error', '')))
+
+                # Source 2: MobSF run_activity_tester (ALL activities, finds hidden)
+                print('  [EVIDENCE] Step 2/3: MobSF run_activity_tester (all activities)...')
+                r2 = self.tools.run_activity_tester()
+                all_act_data = str(r2.get('data', r2.get('error', '')))
+
+                # Source 3: logcat after ADB launches (captured from nav actions above)
+                print('  [EVIDENCE] Step 3/3: Logcat post-launch...')
+                r3 = self.tools.get_logcat()
+                logcat_data = str(r3.get('data', r3.get('error', '')))
+
+                # Combine all 3 sources into one evidence string for pattern matching
+                combined = '\n'.join([
+                    'test_exported_activities:', exported_data,
+                    'run_activity_tester:', all_act_data,
+                    'logcat:', logcat_data,
+                ])
+                result = {
+                    'success': True,
+                    'data': combined,
+                }
+                print(f'  [EVIDENCE] Combined {len(combined)} chars from 3 sources')
             else:
                 result = {'success': False, 'error': f'Unknown evidence tool: {tool}'}
 
