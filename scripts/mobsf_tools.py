@@ -49,7 +49,7 @@ class MobSFTools:
             subprocess.run([
                 'adb', 'shell', 'monkey', '-p', pkg,
                 '-c', 'android.intent.category.LAUNCHER', '1'
-            ], timeout=15, capture_output=True)
+            ], timeout=(5, 15), capture_output=True)
             time.sleep(3)
             return {'success': True}
         except Exception as e:
@@ -61,7 +61,7 @@ class MobSFTools:
         try:
             subprocess.run(
                 ['adb', 'shell', 'am', 'force-stop', pkg],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             return {'success': True}
         except Exception as e:
@@ -75,7 +75,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/start_activity',
                 headers=self.headers,
                 data={'hash': self.hash, 'activity': activity},
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -98,7 +98,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/adb_command',
                 headers=self.headers,
                 data={'cmd': cmd},
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -117,7 +117,7 @@ class MobSFTools:
             escaped = text.replace(' ', '%s').replace("'", "\\'")
             subprocess.run(
                 ['adb', 'shell', 'input', 'text', escaped],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             time.sleep(1)
             return {'success': True}
@@ -129,7 +129,7 @@ class MobSFTools:
         try:
             subprocess.run(
                 ['adb', 'shell', 'input', 'tap', str(x), str(y)],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             time.sleep(1)
             return {'success': True}
@@ -141,7 +141,7 @@ class MobSFTools:
         try:
             subprocess.run(
                 ['adb', 'shell', 'input', 'keyevent', str(keycode)],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             time.sleep(1)
             return {'success': True}
@@ -159,7 +159,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/screenshot',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=20
+                timeout=(5, 20)
             )
             if r.status_code == 200 and \
                r.headers.get('content-type', '').startswith('image'):
@@ -174,15 +174,15 @@ class MobSFTools:
             path = os.path.join(self.output_dir, 'screenshots', f'{name}.png')
             subprocess.run(
                 ['adb', 'shell', 'screencap', '-p', f'/sdcard/{name}.png'],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             subprocess.run(
                 ['adb', 'pull', f'/sdcard/{name}.png', path],
-                timeout=10, capture_output=True
+                timeout=(5, 10), capture_output=True
             )
             subprocess.run(
                 ['adb', 'shell', 'rm', f'/sdcard/{name}.png'],
-                timeout=5, capture_output=True
+                timeout=(5, 5), capture_output=True
             )
             return {'success': True, 'path': path}
         except Exception as e:
@@ -206,7 +206,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/logcat',
                 headers=self.headers,
                 data={'package': pkg},
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -233,7 +233,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/httptools',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=20
+                timeout=(5, 20)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -271,7 +271,7 @@ class MobSFTools:
                     'auxiliary_hooks': '',
                     'frida_code':      ''
                 },
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -296,7 +296,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/frida/get_script',
                 headers=self.headers,
                 data={'script': script_name},
-                timeout=20
+                timeout=(5, 20)
             )
             if r.status_code != 200:
                 return {'success': False, 'error': f'Script fetch failed: HTTP {r.status_code}'}
@@ -315,7 +315,7 @@ class MobSFTools:
                     'auxiliary_hooks': '',
                     'frida_code':      script_code
                 },
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r2.json() if r2.content else {}
             if r2.status_code != 200:
@@ -338,7 +338,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/frida/logs',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=20
+                timeout=(5, 20)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -362,7 +362,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/frida/api_monitor',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=20
+                timeout=(5, 20)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -386,7 +386,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/frida/get_dependencies',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=30
+                timeout=(5, 30)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -403,7 +403,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/frida/list_scripts',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=20
+                timeout=(5, 20)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -428,7 +428,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/activity',
                 headers=self.headers,
                 data={'hash': self.hash, 'type': 'exported'},
-                timeout=120
+                timeout=(5, 120)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -449,7 +449,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/activity',
                 headers=self.headers,
                 data={'hash': self.hash, 'type': 'all'},
-                timeout=180
+                timeout=(5, 180)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -474,7 +474,7 @@ class MobSFTools:
                 f'{self.server}/api/v1/android/tls_tests',
                 headers=self.headers,
                 data={'hash': self.hash},
-                timeout=180
+                timeout=(5, 180)
             )
             resp = r.json() if r.content else {}
             if r.status_code != 200:
@@ -530,6 +530,269 @@ class MobSFTools:
         print(f'  [NAV] Navigation complete — vulnerability path triggered')
         return {'success': True, 'activity': activity, 'steps_executed': len(actions)}
 
+    # ─────────────────────────────────────────
+    # MANIFEST EVIDENCE (for static findings)
+    # ─────────────────────────────────────────
+
+    def get_manifest_content(self):
+        """
+        Fetch the decoded AndroidManifest.xml text from MobSF SAST.
+        Endpoint: GET /api/v1/view_source?file=AndroidManifest.xml&hash=<hash>&type=apk
+        Returns: {'success': True, 'content': '<xml string>'} or {'success': False, 'error': ...}
+        """
+        print('  [*] Fetching AndroidManifest.xml from MobSF SAST...')
+        try:
+            r = requests.get(
+                f'{self.server}/api/v1/view_source',
+                headers=self.headers,
+                params={
+                    'file': 'AndroidManifest.xml',
+                    'hash': self.hash,
+                    'type': 'apk',
+                },
+                timeout=(5, 30),
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # MobSF returns: {"file": "...", "data": "<xml>", "status": "ok"}
+                content = data.get('data', '') or data.get('content', '')
+                if content:
+                    print(f'  [OK] Manifest fetched ({len(content)} chars)')
+                    return {'success': True, 'content': content}
+                return {'success': False, 'error': f'Empty data in response: {list(data.keys())}'}
+            return {'success': False, 'error': f'HTTP {r.status_code}'}
+        except Exception as e:
+            # Fallback: pull directly from device via ADB
+            print(f'  [WARN] MobSF view_source failed ({e}), trying ADB pull...')
+            return self._get_manifest_via_adb()
+
+    def _get_manifest_via_adb(self):
+        """
+        Fallback: pull decoded manifest from device using ADB + aapt2.
+        Tries: (1) cat from extracted APK location, (2) aapt2 dump, (3) apktool
+
+        """
+        try:
+            # Try to get the APK path first
+            r = subprocess.run(
+                ['adb', 'shell', 'pm', 'path', self.package],
+                capture_output=True, text=True, timeout=10
+            )
+            apk_path = r.stdout.strip().replace('package:', '').strip()
+            if not apk_path:
+                return {'success': False, 'error': 'Could not find APK path via pm path'}
+
+            # Pull APK to temp location
+            local_apk = os.path.join(self.output_dir, '_temp_app.apk')
+            subprocess.run(
+                ['adb', 'pull', apk_path, local_apk],
+                capture_output=True, timeout=30
+            )
+
+            # Try aapt2 to dump manifest
+            r2 = subprocess.run(
+                ['aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', local_apk],
+                capture_output=True, text=True, timeout=30
+            )
+            if r2.returncode == 0 and r2.stdout:
+                return {'success': True, 'content': r2.stdout}
+
+            # Try aapt (v1) fallback
+            r3 = subprocess.run(
+                ['aapt', 'dump', 'xmltree', local_apk, 'AndroidManifest.xml'],
+                capture_output=True, text=True, timeout=30
+            )
+            if r3.returncode == 0 and r3.stdout:
+                return {'success': True, 'content': r3.stdout}
+
+            return {'success': False, 'error': 'aapt/aapt2 not available or failed'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def manifest_screenshot(self, finding_title, highlight_keywords,
+                            name=None, context_lines=8):
+        """
+        Capture AndroidManifest.xml as a PNG evidence screenshot with the
+        relevant lines highlighted in yellow.
+
+        Steps:
+          1. Fetch manifest text via MobSF SAST API (or ADB fallback)
+          2. Find lines containing any highlight_keyword
+          3. Extract ±context_lines around each match
+          4. Render to PNG using Pillow with:
+               - Dark background (like a code editor)
+               - Yellow highlight on matching lines
+               - Filename + finding title as header
+          5. Save to screenshots/ and return path
+
+        Args:
+            finding_title   : str — used as header text and filename
+            highlight_keywords : list[str] — e.g. ['android:debuggable', 'true']
+            name            : str — output filename (auto-generated if None)
+            context_lines   : int — lines before/after match to include
+
+        Returns:
+            {'success': True, 'path': '/path/to/screenshot.png', 'matched_lines': [...]}
+            {'success': False, 'error': '...'}
+        """
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            try:
+                import subprocess as _sp
+                _sp.run(['pip', 'install', 'Pillow', '--break-system-packages', '-q'],
+                        capture_output=True)
+                from PIL import Image, ImageDraw, ImageFont
+            except Exception as e:
+                return {'success': False, 'error': f'Pillow not available: {e}'}
+
+        # ── Step 1: Get manifest content ──────────────────────────────
+        result = self.get_manifest_content()
+        if not result['success']:
+            return result
+
+        manifest_text = result['content']
+        lines         = manifest_text.splitlines()
+
+        # ── Step 2: Find matching lines ───────────────────────────────
+        matched_indices = set()
+        for i, line in enumerate(lines):
+            line_lower = line.lower()
+            if any(kw.lower() in line_lower for kw in highlight_keywords):
+                # Include context window around match
+                for j in range(max(0, i - context_lines),
+                               min(len(lines), i + context_lines + 1)):
+                    matched_indices.add(j)
+
+        if not matched_indices:
+            # No match found — fall back to showing first 60 lines
+            print(f'  [WARN] No manifest lines matched keywords: {highlight_keywords}')
+            display_indices = list(range(min(60, len(lines))))
+            highlight_set   = set()
+        else:
+            display_indices = sorted(matched_indices)
+            # Which lines in display_indices are actual matches (get yellow bg)
+            highlight_set = set()
+            for i, line in enumerate(lines):
+                if any(kw.lower() in line.lower() for kw in highlight_keywords):
+                    highlight_set.add(i)
+
+        display_lines = [(i, lines[i]) for i in display_indices]
+        matched_lines = [lines[i] for i in sorted(highlight_set)]
+
+        print(f'  [*] Rendering manifest screenshot: {len(display_lines)} lines, '
+              f'{len(highlight_set)} highlighted')
+
+        # ── Step 3: Render PNG ────────────────────────────────────────
+        # Typography
+        FONT_SIZE   = 14
+        LINE_HEIGHT = 20
+        PADDING     = 16
+        HEADER_H    = 60
+        GUTTER      = 48   # line number column width
+
+        # Try to load monospace font; fall back to PIL default
+        font = header_font = None
+        for font_path in [
+            '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf',
+            '/System/Library/Fonts/Menlo.ttc',
+            'C:/Windows/Fonts/consola.ttf',
+        ]:
+            if os.path.exists(font_path):
+                try:
+                    font        = ImageFont.truetype(font_path, FONT_SIZE)
+                    header_font = ImageFont.truetype(font_path, FONT_SIZE + 2)
+                    break
+                except Exception:
+                    pass
+        if font is None:
+            font = header_font = ImageFont.load_default()
+
+        # Canvas size
+        max_chars  = max((len(l) for _, l in display_lines), default=80)
+        img_width  = GUTTER + PADDING + max_chars * 8 + PADDING
+        img_width  = max(img_width, 900)
+        img_height = HEADER_H + len(display_lines) * LINE_HEIGHT + PADDING * 2
+
+        # Colours
+        BG_DARK    = (30,  30,  30)    # editor background
+        BG_HEADER  = (20,  20,  20)    # header bar
+        BG_HILIGHT = (80,  70,  0)     # yellow highlight row
+        BG_GUTTER  = (40,  40,  40)    # line number background
+        C_LINENO   = (100, 100, 100)   # grey line numbers
+        C_TEXT     = (212, 212, 212)   # normal text
+        C_HITEXT   = (255, 220, 50)    # highlighted text
+        C_HEADER   = (255, 255, 255)   # header text
+        C_SUBHEAD  = (150, 200, 255)   # finding subtitle
+        C_BORDER   = (60,  60,  60)    # separator
+
+        img  = Image.new('RGB', (img_width, img_height), BG_DARK)
+        draw = ImageDraw.Draw(img)
+
+        # Header bar
+        draw.rectangle([0, 0, img_width, HEADER_H], fill=BG_HEADER)
+        draw.line([0, HEADER_H, img_width, HEADER_H], fill=C_BORDER, width=2)
+        draw.text((PADDING, 10),    'AndroidManifest.xml',    font=header_font, fill=C_HEADER)
+        draw.text((PADDING, 32),    f'Evidence: {finding_title}',
+                                                              font=font,        fill=C_SUBHEAD)
+        draw.text((img_width - 200, 10), f'MobSF SAST Analysis',
+                                                              font=font,        fill=C_LINENO)
+
+        # Code lines
+        prev_idx = None
+        y = HEADER_H + PADDING
+        for idx, (line_no, line_text) in enumerate(display_lines):
+            real_line = line_no + 1   # 1-indexed
+
+            # Gap indicator: show "..." if there's a break in line numbers
+            if prev_idx is not None and line_no > prev_idx + 1:
+                draw.text(
+                    (GUTTER + PADDING // 2, y),
+                    '   ···',
+                    font=font, fill=C_LINENO
+                )
+                y += LINE_HEIGHT
+
+            is_highlighted = line_no in highlight_set
+
+            # Row background
+            if is_highlighted:
+                draw.rectangle([0, y, img_width, y + LINE_HEIGHT], fill=BG_HILIGHT)
+            draw.rectangle([0, y, GUTTER, y + LINE_HEIGHT], fill=BG_GUTTER)
+
+            # Line number
+            draw.text((4, y + 3), f'{real_line:4d}', font=font, fill=C_LINENO)
+
+            # Code text (truncate very long lines)
+            text_col    = C_HITEXT if is_highlighted else C_TEXT
+            display_txt = line_text.rstrip()
+            if len(display_txt) > 120:
+                display_txt = display_txt[:117] + '...'
+            draw.text((GUTTER + PADDING // 2, y + 3), display_txt,
+                      font=font, fill=text_col)
+
+            y        += LINE_HEIGHT
+            prev_idx  = line_no
+
+        # ── Step 4: Save ──────────────────────────────────────────────
+        safe_name = name or (
+            'manifest_' +
+            finding_title.lower()
+                         .replace(' ', '_')
+                         .replace('/', '_')
+                         .replace(':', '')
+                         [:50]
+        )
+        out_path = os.path.join(self.output_dir, 'screenshots', f'{safe_name}.png')
+        img.save(out_path, 'PNG')
+        print(f'  [OK] Manifest screenshot saved: {out_path}')
+        return {
+            'success':       True,
+            'path':          out_path,
+            'matched_lines': matched_lines,
+        }
+
     def get_tool_list(self):
         return {
             'navigate_to_finding':      'Navigate to a specific AllSafe challenge screen and trigger the vulnerability (use finding title as key)',
@@ -551,4 +814,6 @@ class MobSFTools:
             'test_exported_activities': 'Launch all exported activities and take screenshots',
             'run_activity_tester':      'Launch ALL activities (including hidden/non-exported) and take screenshots',
             'run_tls_tests':            'Run 4 TLS/SSL security tests: Misconfiguration, Pinning, Pinning Bypass, Cleartext (~75s)',
+            'get_manifest_content':     'Fetch raw AndroidManifest.xml text from MobSF SAST (falls back to ADB+aapt2)',
+            'manifest_screenshot':      'Render highlighted AndroidManifest.xml lines as PNG evidence for static findings',
         }
