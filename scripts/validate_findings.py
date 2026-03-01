@@ -598,6 +598,18 @@ if __name__ == '__main__':
 
     for i, finding in enumerate(findings):
         print(f'\n[{i+1}/{total}] [{finding["severity"]}] {finding["title"][:55]}')
+
+        # ── Auto-verdict check ──────────────────────────────────────
+        # Findings that are pure SAST facts need no tools, no Groq call.
+        # Examples: minSdkVersion, binary hardening, manifest flags.
+        from claude_agent import auto_verdict
+        av = auto_verdict(finding)
+        if av:
+            print(f'  [AUTO] {av["verdict"]} ({av["confidence"]}) — skipping DAST')
+            all_results.append({'finding': finding, 'verdict': av})
+            continue
+        # ── End auto-verdict — proceed with full DAST + Groq ────────
+
         snippet = get_source_snippet(finding)
         result  = agent.validate_finding(finding, snippet)
         all_results.append(result)

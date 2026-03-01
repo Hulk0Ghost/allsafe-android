@@ -8,11 +8,13 @@ Model: llama-3.3-70b-versatile
 import json
 import requests
 import os
-
-# Fix Windows encoding
 import sys
+
+# Fix Windows encoding + force flush for Jenkins console visibility
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
+import functools
+print = functools.partial(print, flush=True)
 
 
 # -----------------------------------------
@@ -237,7 +239,128 @@ def get_suggested_frida_scripts(finding):
     return matched
 
 
-class ClaudeAgent:
+# -----------------------------------------
+# AUTO VERDICT PATTERNS
+# Findings that don't need ANY tools or Groq
+# Confirmed purely from SAST report data
+# -----------------------------------------
+
+AUTO_VERDICT_PATTERNS = [
+    # ── SDK / Android version ─────────────────────────────────────────
+    {
+        'keywords': ['vulnerable android', 'minsdk', 'min sdk', 'android version',
+                     'can be installed on a vulnerable', 'unpatched android',
+                     'android 4.', 'android 5.', 'android 6.', 'android 7.'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'The minSdkVersion in AndroidManifest.xml allows installation on old Android versions '
+            'with known unpatched CVEs. This is a static configuration fact confirmed by SAST. '
+            'No DAST validation is possible or needed — you cannot dynamically test which Android '
+            'versions an app allows installation on.'
+        ),
+        'fix': 'Increase minSdkVersion to at least 24 (Android 7.0) in build.gradle.',
+    },
+
+    # ── Binary hardening — pure static facts ──────────────────────────
+    {
+        'keywords': ['nx bit', 'dep enabled', 'stack canary', 'pie enabled',
+                     'relro', 'rpath', 'runpath', 'fortify', 'stripped'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'Binary hardening flags are static properties of the compiled binary. '
+            'They are measured directly from the ELF headers by SAST — DAST cannot change '
+            'or verify them differently. This finding is confirmed from static analysis.'
+        ),
+        'fix': 'Enable the missing hardening flag in your NDK build configuration.',
+    },
+
+    # ── Permission declared but not sensitive ─────────────────────────
+    {
+        'keywords': ['permission declared', 'uses-permission', 'normal permission'],
+        'verdict':  'NEEDS_REVIEW',
+        'confidence': 'MEDIUM',
+        'explanation': (
+            'Permission presence in the manifest is confirmed. Whether it is actively '
+            'abused at runtime requires manual review of the code paths that use it.'
+        ),
+        'fix': 'Remove the permission if not required, or restrict access with proper checks.',
+    },
+
+    # ── App allowBackup ───────────────────────────────────────────────
+    {
+        'keywords': ['allowbackup', 'allow backup', 'android:allowbackup'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'android:allowBackup=true is set in AndroidManifest.xml. '
+            'This allows any USB-connected computer to extract app data via `adb backup` '
+            'without root. This is a manifest configuration fact confirmed by SAST.'
+        ),
+        'fix': 'Set android:allowBackup="false" in AndroidManifest.xml.',
+    },
+
+    # ── Debuggable ────────────────────────────────────────────────────
+    {
+        'keywords': ['debuggable', 'android:debuggable'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'android:debuggable=true is set in AndroidManifest.xml. '
+            'This allows any process to attach a debugger to the app on any device. '
+            'Confirmed from manifest — no DAST needed.'
+        ),
+        'fix': 'Remove android:debuggable or set to false. Never ship debug builds to production.',
+    },
+
+    # ── Cleartext traffic ─────────────────────────────────────────────
+    {
+        'keywords': ['cleartext', 'usescleartexttraffic', 'cleartexttrafficpermitted'],
+        'verdict':  'CONFIRMED',
+        'confidence': 'HIGH',
+        'explanation': (
+            'Cleartext HTTP traffic is permitted via manifest or network security config. '
+            'This is a configuration fact confirmed by SAST. '
+            'TLS tests (run separately) confirm the app actually makes HTTP connections.'
+        ),
+        'fix': 'Set android:usesCleartextTraffic="false" and configure network_security_config.xml.',
+    },
+]
+
+
+def auto_verdict(finding):
+    """
+    Check if a finding can be auto-confirmed/denied purely from SAST data.
+    Returns a verdict dict if auto-decidable, None if Groq + DAST is needed.
+
+    Saves: Groq API calls, tool execution time, avoids pointless TLS/Frida
+    runs on findings that have nothing to do with runtime behaviour.
+    """
+    title = finding.get('title', '').lower()
+    desc  = finding.get('description', '').lower()
+    text  = title + ' ' + desc
+
+    for pattern in AUTO_VERDICT_PATTERNS:
+        if any(kw in text for kw in pattern['keywords']):
+            print(f'  [AUTO] Matched pattern — verdict: {pattern["verdict"]} '
+                  f'(no tools needed)')
+            return {
+                'verdict':          pattern['verdict'],
+                'confidence':       pattern['confidence'],
+                'explanation':      pattern['explanation'],
+                'evidence_summary': f'Auto-verdict from SAST data: {finding["description"][:200]}',
+                'fix_recommendation': pattern['fix'],
+                'risk_score':       7 if finding['severity'] == 'HIGH' else
+                                    9 if finding['severity'] == 'CRITICAL' else 4,
+                'exploitability':   'Determined from static analysis — no runtime dependency.',
+                'screenshots':      [],
+                'auto_verdict':     True,   # flag so reports can show source
+            }
+    return None  # needs full Groq + DAST pipeline
+
+
+
 
     def __init__(self, api_key, mobsf_tools, package_name):
         self.api_key  = api_key
@@ -714,7 +837,18 @@ Respond with ONLY this JSON (raw, no markdown):
         print(f'  Source: {finding.get("source", "unknown")} | CWE: {finding.get("cwe", "N/A")}')
         print(f'{"="*55}')
 
-        test_plan         = self.get_test_plan(finding, source_code_snippet)
+        # Cap max steps to 4 to prevent runaway tool chains
+        # (TLS test = 75s, Frida = 5s wait, activity tester = 120s)
+        # 4 steps max = ~5 minutes per finding worst case
+        MAX_STEPS = 4
+
+        test_plan = self.get_test_plan(finding, source_code_snippet)
+
+        # Enforce step cap
+        if 'test_plan' in test_plan and len(test_plan['test_plan']) > MAX_STEPS:
+            print(f'  [INFO] Capping test plan from {len(test_plan["test_plan"])} to {MAX_STEPS} steps')
+            test_plan['test_plan'] = test_plan['test_plan'][:MAX_STEPS]
+
         execution_results = self.execute_test_plan(test_plan, finding['id'])
         verdict           = self.get_verdict(finding, test_plan, execution_results)
 
