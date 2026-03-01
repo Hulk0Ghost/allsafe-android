@@ -11,12 +11,30 @@ import os
 import sys
 import time
 
-# Fix Windows encoding
+# Fix Windows encoding + force flush for Jenkins console visibility
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
+import functools
+print = functools.partial(print, flush=True)
 
-from mobsf_tools import MobSFTools
-from claude_agent import ClaudeAgent
+# Print immediately so Jenkins shows the script has started
+print('[*] validate_findings.py starting...', flush=True)
+print(f'[*] Python {sys.version}', flush=True)
+print(f'[*] Args: {sys.argv}', flush=True)
+
+try:
+    from mobsf_tools import MobSFTools
+    print('[*] mobsf_tools imported OK')
+except Exception as e:
+    print(f'[FATAL] Failed to import mobsf_tools: {e}')
+    sys.exit(1)
+
+try:
+    from claude_agent import ClaudeAgent
+    print('[*] claude_agent imported OK')
+except Exception as e:
+    print(f'[FATAL] Failed to import claude_agent: {e}')
+    sys.exit(1)
 
 
 # -----------------------------------------
