@@ -606,6 +606,53 @@ if __name__ == '__main__':
         av = auto_verdict(finding)
         if av:
             print(f'  [AUTO] {av["verdict"]} ({av["confidence"]}) — skipping DAST')
+
+            # ── Manifest screenshot evidence ─────────────────────────
+            # For any manifest-sourced finding, capture the relevant
+            # AndroidManifest.xml lines as a PNG evidence screenshot.
+            # This replaces "no evidence" with a real artefact in the report.
+            MANIFEST_HIGHLIGHT_KEYWORDS = {
+                'debuggable':             ['android:debuggable', 'debuggable'],
+                'allowbackup':            ['android:allowBackup', 'allowBackup'],
+                'cleartext':              ['cleartextTrafficPermitted',
+                                           'usesCleartextTraffic', 'cleartext'],
+                'vulnerable android':     ['android:minSdkVersion', 'minSdkVersion',
+                                           'uses-sdk'],
+                'dangerous permission':   ['uses-permission', 'android.permission'],
+                'user-installed certificate': ['network_security_config', 'trustAnchors',
+                                              'certificates src', 'user'],
+            }
+            title_lower = finding.get('title', '').lower()
+            desc_lower  = finding.get('description', '').lower()
+            text_lower  = title_lower + ' ' + desc_lower
+
+            screenshot_path = None
+            for trigger_kw, highlight_kws in MANIFEST_HIGHLIGHT_KEYWORDS.items():
+                if trigger_kw in text_lower:
+                    print(f'  [MANIFEST] Taking manifest screenshot for: {trigger_kw}')
+                    ss = mobsf.manifest_screenshot(
+                        finding_title    = finding['title'],
+                        highlight_keywords = highlight_kws,
+                        name             = f'manifest_{finding["id"].replace("/","_").replace(":","")}'
+                    )
+                    if ss.get('success'):
+                        screenshot_path = ss['path']
+                        print(f'  [MANIFEST] Screenshot saved: {screenshot_path}')
+                        if ss.get('matched_lines'):
+                            print(f'  [MANIFEST] Matched: {ss["matched_lines"][:2]}')
+                    else:
+                        print(f'  [MANIFEST] Screenshot failed: {ss.get("error")}')
+                    break
+
+            # Attach screenshot to verdict
+            if screenshot_path:
+                av['screenshots']     = [screenshot_path]
+                av['evidence_summary'] = (
+                    f'AndroidManifest.xml screenshot captured. '
+                    f'Highlighted: {finding["title"]}. '
+                    f'File: {os.path.basename(screenshot_path)}'
+                )
+
             all_results.append({'finding': finding, 'verdict': av})
             continue
         # ── End auto-verdict — proceed with full DAST + Groq ────────
