@@ -537,15 +537,15 @@ class MobSFTools:
     def get_manifest_content(self):
         """
         Fetch the decoded AndroidManifest.xml text from MobSF SAST.
-        Endpoint: GET /api/v1/view_source?file=AndroidManifest.xml&hash=<hash>&type=apk
+        Endpoint: POST /api/v1/view_source (file, hash, type as form data)
         Returns: {'success': True, 'content': '<xml string>'} or {'success': False, 'error': ...}
         """
         print('  [*] Fetching AndroidManifest.xml from MobSF SAST...')
         try:
-            r = requests.get(
+            r = requests.post(
                 f'{self.server}/api/v1/view_source',
                 headers=self.headers,
-                params={
+                data={
                     'file': 'AndroidManifest.xml',
                     'hash': self.hash,
                     'type': 'apk',
@@ -814,6 +814,6 @@ class MobSFTools:
             'test_exported_activities': 'Launch all exported activities and take screenshots',
             'run_activity_tester':      'Launch ALL activities (including hidden/non-exported) and take screenshots',
             'run_tls_tests':            'Run 4 TLS/SSL security tests: Misconfiguration, Pinning, Pinning Bypass, Cleartext (~75s)',
-            'get_manifest_content':     'Fetch raw AndroidManifest.xml text from MobSF SAST (falls back to ADB+aapt2)',
-            'manifest_screenshot':      'Render highlighted AndroidManifest.xml lines as PNG evidence for static findings',
+            # get_manifest_content / manifest_screenshot are internal helpers called
+            # directly by validate_findings.py — not exposed as AI-callable DAST tools.
         }
