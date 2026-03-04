@@ -1,6 +1,6 @@
 <div align="center">
   <img src="screenshots/logo.png" alt="Allsafe Logo" width="120"/>
-  
+   
   # Allsafe - Android
   
   **An Intentionally Vulnerable Android Application for Security Education**
