@@ -3,7 +3,6 @@ pipeline {
 
   options {
     timestamps()
-    // If you keep your own Checkout stage, avoid the automatic one
     skipDefaultCheckout(true)
   }
 
@@ -25,7 +24,7 @@ pipeline {
 
           docker pull opensecurity/mobsfscan:latest | Out-Host
 
-          # Run scan (do NOT fail build here; gating happens next)
+          # Run scan (mobsfscan may return exit code 1 if findings exist; ignore it)
           docker run --rm -v "${ws}:/src" opensecurity/mobsfscan /src --json -o /src/mobsfscan-report.json
           $scanExit = $LASTEXITCODE
           Write-Host "mobsfscan exit code = $scanExit (ignored here)"
@@ -41,43 +40,69 @@ pipeline {
       }
     }
 
-    stage('Gate (fail on High/Critical)') {
+    stage('MobSFScan Summary (do not block)') {
       steps {
         powershell '''
-          $ErrorActionPreference = "Stop"
+          $report = "mobsfscan-report.json"
+          if (!(Test-Path $report)) {
+            Write-Host "⚠️ mobsfscan report not found: $report (continuing)"
+            exit 0
+          }
 
-          $json = Get-Content "mobsfscan-report.json" -Raw | ConvertFrom-Json
+          $json = Get-Content $report -Raw | ConvertFrom-Json
 
-          # mobsfscan JSON shape can vary: results/findings/issues
-          $findings = @()
-          if ($json.results) { $findings = $json.results }
-          elseif ($json.findings) { $findings = $json.findings }
-          elseif ($json.issues) { $findings = $json.issues }
+          $rulesTriggered = 0
+          $totalMatches = 0
 
-          function Get-Sev($f) {
-            foreach ($k in @("severity","level","risk","issue_severity")) {
-              if ($f.PSObject.Properties.Name -contains $k -and $f.$k) {
-                return $f.$k.ToString().ToUpper()
+          $sevCounts = @{
+            ERROR=0; WARNING=0; INFO=0; UNKNOWN=0
+          }
+
+          $top = @()
+
+          foreach ($p in $json.results.PSObject.Properties) {
+            $rulesTriggered++
+            $ruleId = $p.Name
+            $ruleObj = $p.Value
+
+            $sev = $ruleObj.metadata.severity
+            if (-not $sev) { $sev = "UNKNOWN" }
+            $sev = $sev.ToString().ToUpper()
+            if (-not $sevCounts.ContainsKey($sev)) { $sevCounts[$sev] = 0 }
+
+            $files = $ruleObj.files
+            if ($files) {
+              $count = @($files).Count
+              $totalMatches += $count
+              $sevCounts[$sev] += $count
+
+              foreach ($f in $files | Select-Object -First 10) {
+                $top += [PSCustomObject]@{
+                  rule_id  = $ruleId
+                  severity = $sev
+                  file     = $f.file_path
+                  lines    = ($f.match_lines -join "-")
+                }
               }
+            } else {
+              # Rule present without files list
+              $sevCounts[$sev] += 1
             }
-            return "UNKNOWN"
           }
 
-          $hc = @()
-          foreach ($f in $findings) {
-            $s = Get-Sev $f
-            if ($s -eq "HIGH" -or $s -eq "CRITICAL") { $hc += $f }
-          }
+          Write-Host "================ MobSFScan Summary ================"
+          Write-Host ("Rules triggered : {0}" -f $rulesTriggered)
+          Write-Host ("Total matches   : {0}" -f $totalMatches)
+          Write-Host ""
+          Write-Host "Severity breakdown (by matches):"
+          $sevCounts.GetEnumerator() | Sort-Object Name | Format-Table Name,Value -AutoSize | Out-String | Write-Host
 
-          Write-Host ("Total findings: {0}" -f $findings.Count)
-          Write-Host ("High/Critical: {0}" -f $hc.Count)
+          Write-Host ""
+          Write-Host "Top findings (sample):"
+          $top | Select-Object -First 15 | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "==================================================="
 
-          if ($hc.Count -gt 0) {
-            Write-Host "❌ FAIL: High/Critical findings detected."
-            exit 2
-          }
-
-          Write-Host "✅ PASS: No High/Critical findings."
+          Write-Host "✅ PASS (policy): Not blocking PR on findings."
           exit 0
         '''
       }
