@@ -1,26 +1,22 @@
-pipeline {
-  agent any
+stage('MobSFScan (Docker, code-only)') {
+  steps {
+    powershell '''
+      Write-Host "WORKSPACE = $env:WORKSPACE"
+      docker version
+      docker info
 
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
+      # Make sure path uses backslashes removed for docker mount
+      $ws = $env:WORKSPACE.Replace("\\","/")
+      Write-Host "MOUNT PATH = $ws"
 
-    stage('MobSFScan (Docker, code-only)') {
-      steps {
-        powershell '''
-          docker pull opensecurity/mobsfscan:latest
+      # Pull (ok)
+      docker pull opensecurity/mobsfscan:latest
 
-          # Run scan and write JSON into workspace
-          docker run --rm -v "${env:WORKSPACE}:/src" opensecurity/mobsfscan /src --json -o /src/mobsfscan-report.json
-        '''
-      }
-    }
-  }
+      # Run scan (this is the important part)
+      docker run --rm -v "${ws}:/src" opensecurity/mobsfscan /src --json -o /src/mobsfscan-report.json
 
-  post {
-    always {
-      archiveArtifacts artifacts: 'mobsfscan-report.json', fingerprint: true
-    }
+      # Verify file exists
+      dir mobsfscan-report.json
+    '''
   }
 }
