@@ -1,0 +1,514 @@
+{
+  "errors": [],
+  "mobsfscan_version": "0.4.5",
+  "results": {
+    "aes_ecb_mode": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/WeakCryptography.java",
+          "match_lines": [
+            35,
+            35
+          ],
+          "match_position": [
+            29,
+            71
+          ],
+          "match_string": "            Cipher cipher = Cipher.getInstance(\"AES/ECB/PKCS5PADDING\");"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-327: Use of a Broken or Risky Cryptographic Algorithm",
+        "description": "The App uses ECB mode in Cryptographic encryption algorithm. ECB mode is known to be weak as it results in the same ciphertext for identical blocks of plaintext.",
+        "masvs": "MSTG-CRYPTO-2",
+        "owasp-mobile": "M5: Insufficient Cryptography",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x04g-Testing-Cryptography.md#weak-block-cipher-mode",
+        "severity": "ERROR"
+      }
+    },
+    "android_certificate_pinning": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/CertificatePinning.java",
+          "match_lines": [
+            47,
+            47
+          ],
+          "match_position": [
+            59,
+            90
+          ],
+          "match_string": "            CertificatePinner.Builder certificatePinner = new CertificatePinner.Builder();"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/CertificatePinning.java",
+          "match_lines": [
+            89,
+            89
+          ],
+          "match_position": [
+            36,
+            67
+          ],
+          "match_string": "                .certificatePinner(new CertificatePinner.Builder()"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-295: Improper Certificate Validation",
+        "description": "This app does not use a TLS/SSL certificate or public key pinning in code to detect or prevent MITM attacks in secure communication channel. Please verify if pinning is enabled in `network_security_config.xml`.",
+        "masvs": "MSTG-NETWORK-4",
+        "owasp-mobile": "M3: Insecure Communication",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05g-Testing-Network-Communication.md#testing-custom-certificate-stores-and-certificate-pinning-mstg-network-4",
+        "severity": "INFO"
+      }
+    },
+    "android_certificate_transparency": {
+      "metadata": {
+        "cwe": "CWE-295: Improper Certificate Validation",
+        "description": "This app does not enforce TLS Certificate Transparency which helps to  detect SSL certificates that have been mistakenly issued by a  certificate authority or maliciously acquired from an otherwise  unimpeachable certificate authority.",
+        "masvs": "MSTG-NETWORK-4",
+        "owasp-mobile": "M3: Insecure Communication",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05g-Testing-Network-Communication.md#testing-custom-certificate-stores-and-certificate-pinning-mstg-network-4",
+        "severity": "INFO"
+      }
+    },
+    "android_kotlin_hardcoded": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/SQLInjection.kt",
+          "match_lines": [
+            30,
+            30
+          ],
+          "match_position": [
+            1093,
+            1194
+          ],
+          "match_string": "username = '\" + username.text.tostring() + \"' and password = '\" + md5(password.text.tostring()) + \"'\""
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-798: Use of Hard-coded Credentials",
+        "description": "Files may contain hardcoded sensitive information like usernames, passwords, keys etc.",
+        "masvs": "MSTG-STORAGE-14",
+        "owasp-mobile": "M9: Reverse Engineering",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05d-Testing-Data-Storage.md#storing-a-key---example",
+        "severity": "WARNING"
+      }
+    },
+    "android_kotlin_md5": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/SQLInjection.kt",
+          "match_lines": [
+            47,
+            47
+          ],
+          "match_position": [
+            1767,
+            1784
+          ],
+          "match_string": ".getInstance(\"MD5"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-327: Use of a Broken or Risky Cryptographic Algorithm",
+        "description": "MD5 is a weak hash known to have hash collisions.",
+        "masvs": "MSTG-CRYPTO-4",
+        "owasp-mobile": "M5: Insufficient Cryptography",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x04g-Testing-Cryptography.md#identifying-insecure-andor-deprecated-cryptographic-algorithms-mstg-crypto-4",
+        "severity": "WARNING"
+      }
+    },
+    "android_kotlin_sql_raw_query": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/SQLInjection.kt",
+          "match_lines": [
+            4,
+            4
+          ],
+          "match_position": [
+            84,
+            107
+          ],
+          "match_string": "android.database.sqlite"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/SQLInjection.kt",
+          "match_lines": [
+            30,
+            30
+          ],
+          "match_position": [
+            1058,
+            1067
+          ],
+          "match_string": "rawQuery("
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+        "description": "App uses SQLite Database and execute raw SQL query. Untrusted user input in raw SQL queries can cause SQL Injection. Also sensitive information should be encrypted and written to the database.",
+        "masvs": "MSTG-PLATFORM-2",
+        "owasp-mobile": "M7: Client Code Quality",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x04h-Testing-Code-Quality.md#injection-flaws-mstg-arch-2-and-mstg-platform-2",
+        "severity": "WARNING"
+      }
+    },
+    "android_logging": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/CertificatePinning.java",
+          "match_lines": [
+            64,
+            65
+          ],
+          "match_position": [
+            21,
+            97
+          ],
+          "match_string": "                    final String message = e.getMessage();\n                    Log.d(\"ALLSAFE\", message != null ? message : \"IOException with no message\");"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/DeepLinkTask.java",
+          "match_lines": [
+            22,
+            25
+          ],
+          "match_position": [
+            9,
+            66
+          ],
+          "match_string": "        String action = intent.getAction();\n        Uri data = intent.getData();\n\n        Log.d(\"ALLSAFE\", \"Action: \" + action + \" Data: \" + data);"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/DeepLinkTask.java",
+          "match_lines": [
+            23,
+            25
+          ],
+          "match_position": [
+            9,
+            66
+          ],
+          "match_string": "        Uri data = intent.getData();\n\n        Log.d(\"ALLSAFE\", \"Action: \" + action + \" Data: \" + data);"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/InsecureLogging.java",
+          "match_lines": [
+            27,
+            33
+          ],
+          "match_position": [
+            9,
+            12
+          ],
+          "match_string": "        TextInputEditText secret = view.findViewById(R.id.secret);\n        secret.setOnEditorActionListener((v, actionId, event) -> {\n            if (actionId == EditorInfo.IME_ACTION_DONE && !Objects.requireNonNull(secret.getText()).toString().equals(\"\")) {\n                Log.d(\"ALLSAFE\", \"User entered secret: \" + secret.getText().toString());\n            }\n            return false;\n        });"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/InsecureLogging.java",
+          "match_lines": [
+            30,
+            30
+          ],
+          "match_position": [
+            17,
+            89
+          ],
+          "match_string": "                Log.d(\"ALLSAFE\", \"User entered secret: \" + secret.getText().toString());"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/NoteReceiver.java",
+          "match_lines": [
+            39,
+            50
+          ],
+          "match_position": [
+            9,
+            46
+          ],
+          "match_string": "        HttpUrl httpUrl = new HttpUrl.Builder()\n                .scheme(\"http\")\n                .host(server)\n                .addPathSegment(\"api\")\n                .addPathSegment(\"v1\")\n                .addPathSegment(\"note\")\n                .addPathSegment(\"add\")\n                .addQueryParameter(\"auth_token\", \"YWxsc2FmZV9kZXZfYWRtaW5fdG9rZW4=\")\n                .addQueryParameter(\"note\", note)\n                .build();\n\n        Log.d(\"ALLSAFE\", httpUrl.toString());"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/RecorderService.java",
+          "match_lines": [
+            52,
+            52
+          ],
+          "match_position": [
+            13,
+            62
+          ],
+          "match_string": "            Log.d(\"ALLSAFE\", \"Exception: \" + e.getMessage());"
+        },
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/RecorderService.java",
+          "match_lines": [
+            66,
+            66
+          ],
+          "match_position": [
+            13,
+            62
+          ],
+          "match_string": "            Log.d(\"ALLSAFE\", \"Exception: \" + e.getMessage());"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-532: Insertion of Sensitive Information into Log File",
+        "description": "The App logs information. Please ensure that sensitive information is never logged.",
+        "masvs": "MSTG-STORAGE-3",
+        "owasp-mobile": "M1: Improper Platform Usage",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05d-Testing-Data-Storage.md#logs",
+        "severity": "INFO"
+      }
+    },
+    "android_manifest_allow_backup": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/AndroidManifest.xml",
+          "match_lines": [
+            1,
+            1
+          ],
+          "match_position": [
+            1,
+            1
+          ],
+          "match_string": "android:allowBackup=true"
+        }
+      ],
+      "metadata": {
+        "cwe": "cwe-921",
+        "description": "This flag allows anyone to backup your application data via adb. It allows users who have enabled USB debugging to copy application data off of the device.",
+        "masvs": "storage-8",
+        "owasp-mobile": "m1",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05d-Testing-Data-Storage.md#static-analysis-7",
+        "severity": "WARNING"
+      }
+    },
+    "android_manifest_debugging_enabled": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/AndroidManifest.xml",
+          "match_lines": [
+            1,
+            1
+          ],
+          "match_position": [
+            1,
+            1
+          ],
+          "match_string": "android:debuggable=true"
+        }
+      ],
+      "metadata": {
+        "cwe": "cwe-489",
+        "description": "Debugging was enabled on the app which makes it easier for reverse engineers to hook a debugger to it. This allows dumping a stack trace and accessing debugging helper classes.",
+        "masvs": "code-2",
+        "owasp-mobile": "m10",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05i-Testing-Code-Quality-and-Build-Settings.md#testing-whether-the-app-is-debuggable-mstg-code-2",
+        "severity": "ERROR"
+      }
+    },
+    "android_manifest_domain_config_cleartext": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/res/xml/network_security_config.xml",
+          "match_lines": [
+            1,
+            1
+          ],
+          "match_position": [
+            1,
+            1
+          ],
+          "match_string": "domain_config: cleartextTrafficPermitted=true"
+        }
+      ],
+      "metadata": {
+        "cwe": "cwe-319",
+        "description": "A domain or multiple domains are explicitly configured to allow plain text traffic. Ensure that it is not a production endpoint(s).",
+        "masvs": "network-1",
+        "owasp-mobile": "m3",
+        "reference": "https://github.com/OWASP/owasp-mastg/blob/master/Document/0x05g-Testing-Network-Communication.md#testing-for-cleartext-traffic",
+        "severity": "INFO"
+      }
+    },
+    "android_safetynet": {
+      "metadata": {
+        "cwe": "CWE-353: Missing Support for Integrity Check",
+        "description": "This app does not uses SafetyNet Attestation API that provides cryptographically-signed attestation, assessing the device's integrity. This check helps to ensure that the servers are interacting with the genuine app running on a genuine Android device. ",
+        "masvs": "MSTG-RESILIENCE-1",
+        "owasp-mobile": "M8: Code Tampering",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05j-Testing-Resiliency-Against-Reverse-Engineering.md#testing-root-detection-mstg-resilience-1",
+        "severity": "INFO"
+      }
+    },
+    "android_ssl_pinning": {
+      "metadata": {
+        "cwe": "CWE-295: Improper Certificate Validation",
+        "description": "This app does not use TLS/SSL certificate or public key pinning to detect or prevent MITM attacks in secure communication channel.",
+        "masvs": "MSTG-NETWORK-4",
+        "owasp-mobile": "M3: Insecure Communication",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05g-Testing-Network-Communication.md#testing-custom-certificate-stores-and-certificate-pinning-mstg-network-4",
+        "severity": "INFO"
+      }
+    },
+    "android_tapjacking": {
+      "metadata": {
+        "cwe": "CWE-200: Information Exposure",
+        "description": "This app does not have capabilities to prevent tapjacking attacks.",
+        "masvs": "MSTG-PLATFORM-9",
+        "owasp-mobile": "M1: Improper Platform Usage",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05h-Testing-Platform-Interaction.md#testing-for-overlay-attacks-mstg-platform-9",
+        "severity": "INFO"
+      }
+    },
+    "android_task_hijacking2": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/AndroidManifest.xml",
+          "match_lines": [
+            1,
+            1
+          ],
+          "match_position": [
+            1,
+            1
+          ],
+          "match_string": "Activity exported, targetSdk<29 and launchMode != singleInstance or taskAffinity is not empty"
+        }
+      ],
+      "metadata": {
+        "cwe": "cwe-1021",
+        "description": "Activity is found to be vulnerable to StrandHogg 2.0 task hijacking vulnerability. When vulnerable, it is possible for other applications to place a malicious activity on top of the activity stack of the vulnerable application. This makes the application an easy target for phishing attacks. The vulnerability can be remediated by setting the launch mode attribute to \"singleInstance\" and by setting an empty taskAffinity (taskAffinity=\"\"). You can also update the target SDK version (26) of the app to 29 or higher to fix this issue at platform level.",
+        "masvs": "platform-1",
+        "owasp-mobile": "m1",
+        "reference": "https://github.com/OWASP/owasp-mastg/blob/master/Document/0x05a-Platform-Overview.md",
+        "severity": "ERROR"
+      }
+    },
+    "hardcoded_api_key": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/WeakCryptography.java",
+          "match_lines": [
+            30,
+            30
+          ],
+          "match_position": [
+            5,
+            56
+          ],
+          "match_string": "    public static final String KEY = \"1nf053c4dv3n7ur3\";"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-798: Use of Hard-coded Credentials",
+        "description": "A hardcoded Key is identified.",
+        "masvs": "MSTG-STORAGE-14",
+        "owasp-mobile": "M9: Reverse Engineering",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05d-Testing-Data-Storage.md#storing-a-key---example",
+        "severity": "WARNING"
+      }
+    },
+    "java_insecure_random": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/WeakCryptography.java",
+          "match_lines": [
+            17,
+            17
+          ],
+          "match_position": [
+            1,
+            24
+          ],
+          "match_string": "import java.util.Random;"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-330: Use of Insufficiently Random Values",
+        "description": "The App uses an insecure Random Number Generator.",
+        "masvs": "MSTG-CRYPTO-6",
+        "owasp-mobile": "M5: Insufficient Cryptography",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x04g-Testing-Cryptography.md#weak-random-number-generators",
+        "severity": "WARNING"
+      }
+    },
+    "object_deserialization": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/ObjectSerialization.java",
+          "match_lines": [
+            67,
+            67
+          ],
+          "match_position": [
+            21,
+            72
+          ],
+          "match_string": "                    ObjectInputStream ois = new ObjectInputStream(fis);"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-502: Deserialization of Untrusted Data",
+        "description": "Found object deserialization using ObjectInputStream. Deserializing entire Java objects is dangerous because malicious actors can create Java object streams with unintended consequences. Ensure that the objects being deserialized are not user-controlled. Consider using HMACs to sign the data stream to make sure it is not tampered with, or consider only  transmitting object fields and populating a new object.\n",
+        "masvs": "MSTG-PLATFORM-8",
+        "owasp-mobile": "M1: Improper Platform Usage",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05h-Testing-Platform-Interaction.md#testing-object-persistence-mstg-platform-8",
+        "severity": "WARNING"
+      }
+    },
+    "weak_hash": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/WeakCryptography.java",
+          "match_lines": [
+            53,
+            53
+          ],
+          "match_position": [
+            13,
+            69
+          ],
+          "match_string": "            MessageDigest digest = MessageDigest.getInstance(\"MD5\");"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-327: Use of a Broken or Risky Cryptographic Algorithm",
+        "description": "Weak Hash algorithm used. The hash algorithm is known to have hash collisions.",
+        "masvs": "MSTG-CRYPTO-4",
+        "owasp-mobile": "M5: Insufficient Cryptography",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x04g-Testing-Cryptography.md#identifying-insecure-andor-deprecated-cryptographic-algorithms-mstg-crypto-4",
+        "severity": "WARNING"
+      }
+    },
+    "webview_set_allow_file_access": {
+      "files": [
+        {
+          "file_path": "/src/app/src/main/java/infosecadventures/allsafe/challenges/VulnerableWebView.java",
+          "match_lines": [
+            35,
+            35
+          ],
+          "match_position": [
+            9,
+            43
+          ],
+          "match_string": "        settings.setAllowFileAccess(true);"
+        }
+      ],
+      "metadata": {
+        "cwe": "CWE-73: External Control of File Name or Path",
+        "description": "WebView File System Access is enabled. An attacker able to inject script into a WebView, could exploit the opportunity to access local resources.",
+        "masvs": "MSTG-PLATFORM-6",
+        "owasp-mobile": "M7: Client Code Quality",
+        "reference": "https://github.com/MobSF/owasp-mstg/blob/master/Document/0x05h-Testing-Platform-Interaction.md/#testing-webview-protocol-handlers-mstg-platform-6",
+        "severity": "WARNING"
+      }
+    }
+  }
+}
